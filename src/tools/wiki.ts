@@ -137,7 +137,7 @@ Returns: Full wikitext content of the page (may be long — truncated at 8000 ch
 
 poe2db.tw contains datamined information directly from game files, including exact stat values, gem scaling, mod tiers, and more.
 
-Also useful for finding Russian translations of game terms: use lang="ru" to get Russian page.
+Useful for finding translations of game terms in various languages.
 
 IMPORTANT: Skills, passives, and ascendancy nodes with ranks use Roman numerals in poe2db, not Arabic.
 Convert rank numbers: 1→I, 2→II, 3→III, 4→IV, 5→V.
@@ -145,7 +145,7 @@ Always include the rank suffix if the user mentions a specific rank.
 
 Args:
   - term (string): English name of an item, gem, mod, etc. Use underscores for spaces, e.g. "Essence_Drain", "Chaos_Bolt". For ranked skills/passives, append Roman numeral: "Urgent_Totems_II", "War_Cry_III".
-  - lang ("us" | "fr"): Language — "us" for English (default), "fr" for French, etc.
+  - lang: Language code — "us" (English, default), "tw" (Traditional Chinese), "cn" (Simplified Chinese), "kr" (Korean), "jp" (Japanese), "ru" (Russian), "de" (German), "fr" (French), "sp" (Spanish), "pt" (Portuguese), "th" (Thai)
 
 Returns: Raw page content from poe2db (HTML stripped to text, truncated at 6000 chars).
 
@@ -153,7 +153,8 @@ Examples:
   - Gem details: term="Essence_Drain"
   - Passive rank 2: term="Urgent_Totems_II" (NOT "Urgent_Totems_2" or "Urgent_Totems")
   - Ascendancy node rank 3: term="War_Cry_III"
-  - Russian name: term="Chaos_Bolt", lang="ru"
+  - French name: term="Chaos_Bolt", lang="fr"
+  - German name: term="Essence_Drain", lang="de"
   - Unique item: term="Atziri's_Rule"`,
       inputSchema: {
         term: z
@@ -162,7 +163,12 @@ Examples:
           .describe(
             'Search term with underscores for spaces. Use Roman numerals for ranks, e.g. "Urgent_Totems_II", "Essence_Drain"',
           ),
-        lang: z.enum(['us', 'ru']).default('us').describe('Language: us=English, ru=Russian'),
+        lang: z
+          .enum(['us', 'tw', 'cn', 'kr', 'jp', 'ru', 'de', 'fr', 'sp', 'pt', 'th'])
+          .default('us')
+          .describe(
+            'Language: us=English, tw=Traditional Chinese, cn=Simplified Chinese, kr=Korean, jp=Japanese, ru=Russian, de=German, fr=French, sp=Spanish, pt=Portuguese, th=Thai',
+          ),
       },
       annotations: {
         readOnlyHint: true,
