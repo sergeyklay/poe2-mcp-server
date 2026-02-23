@@ -149,6 +149,36 @@ Stash it and keep pushing through Act 3. It'll be much more valuable to you at e
 you could buy with it right now.
 ```
 
+---
+
+**User:**
+
+```plaintext
+I'm stuck on this quest boss... keeps killing me. Is this normal?
+```
+
+**Claude:**
+
+```plaintext
+Looking at your logs — you're in the Trial of Chaos (zone level 38) and you've died twice to the
+boss already. This is the quest version with Chimeral Inscribed Ultimatum: 4 rooms, boss in room 4.
+
+Yes, this is normal and happens to many players! Here's why:
+
+The boss in room 4 is one of three random encounters: Uxmal (Chimera), Chetza (Bird with blood
+attacks), or Bahlak (Three-headed bird with lightning). All of them hit hard, especially against
+energy shield builds.
+
+The key thing to know: your quest key doesn't drop on death. It returns to you, so you can retry
+as many times as you need.
+
+Tips to get through:
+
+1. ...
+2. ...
+   ...
+```
+
 ## Supported Leagues
 
 Default league: **Fate of the Vaal** (patch 0.4.x). Any active PoE2 league can be passed by name:
