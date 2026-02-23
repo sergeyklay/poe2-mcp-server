@@ -93,10 +93,17 @@ Once connected, try asking:
 
 ### Example Conversation
 
-```plaintext
-User: I'm at Act 3 and I just dropped a Divine Orb. How much is it worth, and what should I buy with it?
+**User:**
 
-Claude: Let me check the current price of a Divine Orb for you.
+```plaintext
+I'm 42 lvl at Act 3 and I just dropped a Divine Orb.
+How much is it worth, what should I buy with it?
+```
+
+**Claude:**
+
+```plaintext
+Let me check the current price of a Divine Orb for you.
 
 Nice drop! A Divine Orb is currently worth about 27.5 Chaos Orbs in Fate of the Vaal league,
 and it's one of the more valuable currency drops you can get during the campaign.
@@ -104,14 +111,14 @@ and it's one of the more valuable currency drops you can get during the campaign
 Don't spend it yet. At level 42 in Act 3, you're still in the leveling phase — any gear you buy
 now will be replaced within a few levels. The standard advice for your stage is:
 
-- Divine Orbs are used to reroll the values of explicit modifiers on items — that's an endgame activity,
-  not something useful during the campaign.
-- If you really want to trade it, you could sell it for ~27 Chaos Orbs and use those later at endgame to
-  buy specific gear upgrades for your Lich build once you've finished the campaign and know exactly what
-  you need.
+- Divine Orbs are used to reroll the values of explicit modifiers on items — that's an endgame
+  activity, not something useful during the campaign.
+- If you really want to trade it, you could sell it for ~27 Chaos Orbs and use those later at endgame
+  to buy specific gear upgrades for your Lich build once you've finished the campaign and know exactly
+  what you need.
 
-Stash it and keep pushing through Act 3. It'll be much more valuable to you at endgame than anything you
-could buy with it right now.
+Stash it and keep pushing through Act 3. It'll be much more valuable to you at endgame than anything
+you could buy with it right now.
 ```
 
 ## Supported Leagues
