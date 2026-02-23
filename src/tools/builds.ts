@@ -1,0 +1,118 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+import { getNinjaBuildIndex, type BuildLeagueEntry } from '../services/api.js';
+
+const DEFAULT_LEAGUE = 'Fate of the Vaal';
+
+/** Format a trend indicator for class distribution. */
+function trendLabel(trend: number): string {
+  if (trend === 1) return ' (trending up)';
+  if (trend === -1) return ' (trending down)';
+  return '';
+}
+
+export function registerBuildTools(server: McpServer): void {
+  // ── poe2_meta_builds ──────────────────────────────────────────────
+  server.registerTool(
+    'poe2_meta_builds',
+    {
+      title: 'PoE2 Meta Build Overview',
+      description: `Get class distribution statistics for Path of Exile 2 from poe.ninja.
+
+Shows the most popular classes with their percentage share and trend direction among indexed ladder characters.
+
+Args:
+  - league (string): League name (default: "Fate of the Vaal")
+  - class_name (string): Optional — filter by class, e.g. "Witch", "Lich", "Sorceress"
+
+Returns: Class distribution with percentages and trend indicators.
+
+Examples:
+  - "What's the current meta?" → call with defaults
+  - "Most popular Witch builds?" → class_name="Witch"`,
+      inputSchema: {
+        league: z.string().default(DEFAULT_LEAGUE).describe('PoE2 league name'),
+        class_name: z
+          .string()
+          .optional()
+          .describe('Filter by class name, e.g. Witch, Lich, Warrior, Sorceress'),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ league, class_name }) => {
+      try {
+        const data = await getNinjaBuildIndex();
+        const queryLower = league.toLowerCase();
+
+        // Find matching league by name (case-insensitive contains) or URL slug
+        const entry: BuildLeagueEntry | undefined = data.leagueBuilds.find(
+          (e) =>
+            e.leagueName.toLowerCase().includes(queryLower) ||
+            e.leagueUrl.toLowerCase() === queryLower,
+        );
+
+        if (!entry) {
+          const available = data.leagueBuilds.map((e) => `"${e.leagueName}"`).join(', ');
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `League "${league}" not found. Available leagues: ${available}.`,
+              },
+            ],
+          };
+        }
+
+        const { statistics, total } = entry;
+
+        // Build parallel index arrays, optionally filtered by class_name
+        let indices = statistics.class.map((_, i) => i);
+        if (class_name) {
+          const classQuery = class_name.toLowerCase();
+          indices = indices.filter((i) => statistics.class[i]!.toLowerCase().includes(classQuery));
+        }
+
+        const lines: string[] = [
+          `## Meta Builds Overview — ${entry.leagueName}`,
+          '',
+          `Total indexed characters: ${total.toLocaleString()}`,
+          '',
+          '### Class Distribution',
+        ];
+
+        if (indices.length === 0 && class_name) {
+          lines.push(
+            `No classes matching "${class_name}". Available classes: ${statistics.class.join(', ')}`,
+          );
+        } else {
+          for (const i of indices) {
+            const className = statistics.class[i]!;
+            const pct = statistics.percentage[i] ?? 0;
+            const trend = statistics.trend[i] ?? 0;
+            lines.push(`- **${className}**: ${pct}%${trendLabel(trend)}`);
+          }
+        }
+
+        return {
+          content: [{ type: 'text', text: lines.join('\n') }],
+        };
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: `Error fetching meta builds: ${msg}\n\nNote: poe.ninja build API may not be available for all leagues.`,
+            },
+          ],
+        };
+      }
+    },
+  );
+}
