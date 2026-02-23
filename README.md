@@ -16,6 +16,7 @@ All data is sourced from **public APIs only**. No API keys, no GGG OAuth registr
 | `poe2_wiki_page`       | Retrieve full wiki article content                    | [poe2wiki.net](https://www.poe2wiki.net/) |
 | `poe2_db_lookup`       | Datamined game data: gems, mods, items, translations  | [poe2db.tw](https://poe2db.tw/)           |
 | `poe2_meta_builds`     | Ladder class distribution with percentages and trends | [poe.ninja](https://poe.ninja/poe2)       |
+| `poe2_log_summary`     | Parse local game logs: zones, sessions, player events | Local logs                                |
 
 ## Requirements
 
@@ -68,10 +69,37 @@ Config file locations:
 
 Restart Claude Desktop after editing the config.
 
+#### Custom Game Installation Path
+
+If PoE2 is installed in a non-standard location (e.g., a different drive), add the `--poe2-path` argument. This enables the `poe2_log_summary` tool to find your game logs:
+
+```json
+{
+  "mcpServers": {
+    "poe2": {
+      "command": "node",
+      "args": [
+        "C:\\path\\to\\poe2-mcp-server\\dist\\index.js",
+        "--poe2-path",
+        "D:\\Games\\Path of Exile 2"
+      ]
+    }
+  }
+}
+```
+
+Replace `D:\\Games\\Path of Exile 2` with your actual installation directory.
+
 ### Claude Code
 
 ```bash
 claude mcp add poe2 node /absolute/path/to/poe2-mcp-server/dist/index.js
+```
+
+With custom game path:
+
+```bash
+claude mcp add poe2 node /path/to/poe2-mcp-server/dist/index.js --poe2-path "/path/to/Path of Exile 2"
 ```
 
 ### MCP Inspector
@@ -86,9 +114,9 @@ Once connected, try asking:
 
 - _"How much is an Exalted Orb worth right now?"_
 - _"What are the top 10 most valuable items in the Currency exchange?"_
-- _"Look up Energy Shield mechanics on the wiki"_
+- _"Show me my play session history"_
 - _"Which classes are most popular on the ladder this league?"_
-- _"Find datamined stats for Essence Drain on poe2db"_
+- _"Look up Essence Drain on poe2db"_
 - _"What's the French name for Chaos Bolt?"_ → uses `poe2_db_lookup` with `lang="fr"`
 
 ### Example Conversation
@@ -139,12 +167,13 @@ poe2-mcp-server/
 ├── src/
 │   ├── index.ts              # Entry point: server init, stdio transport
 │   ├── services/
-│   │   └── api.ts            # HTTP client, rate limiter, type definitions
+│   │   └── api.ts            # HTTP client, rate limiter, logs parsing
 │   └── tools/
 │       ├── currency.ts       # Currency exchange rate tools
 │       ├── items.ts          # Exchange item price tools
 │       ├── wiki.ts           # Wiki search & poe2db lookup
-│       └── builds.ts         # Meta build overview
+│       ├── builds.ts         # Meta build overview
+│       └── logfile.ts        # Local logs parser
 ├── dist/                     # Compiled output (npm run build)
 ├── package.json
 ├── tsconfig.json
@@ -159,6 +188,7 @@ poe2-mcp-server/
 | [poe.ninja](https://poe.ninja/poe2) PoE2 Build Index API | None | ~12 req / 5 min    | ~1 hour          |
 | [poe2wiki.net](https://www.poe2wiki.net/) MediaWiki API  | None | Standard MW limits | Community-driven |
 | [poe2db.tw](https://poe2db.tw/)                          | None | Reasonable use     | Each patch       |
+| Local `Client.txt` / `LatestClient.txt`                  | None | N/A (local file)   | Real-time        |
 
 A built-in rate limiter ensures poe.ninja limits are respected automatically.
 
@@ -176,14 +206,6 @@ npm start        # Run the server (stdio)
 2. Export a `register*Tools(server: McpServer)` function
 3. Import and call it in `src/index.ts`
 4. Rebuild: `npm run build`
-
-## Roadmap
-
-- [ ] **GGG OAuth API**: live character data, equipment, passive tree ([requires registration](https://www.pathofexile.com/developer/docs))
-- [ ] **Client.txt log parser**: zone tracking, death counter, drop log from the game's local log file
-- [ ] **Official trade search**: query the trade site for specific items
-- [ ] **RePoE integration**: full datamined gem/item JSON from [RePoE](https://repoe-fork.github.io/)
-- [ ] **Craft simulator**: probability calculations using Craft of Exile data
 
 ## License
 
