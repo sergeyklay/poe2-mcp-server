@@ -58,7 +58,7 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
 
       - name: Run unit tests
-        run: npm run test:coverage
+        run: npm run test:coverage -- --reporter=junit
 
       - name: Upload code coverage
         if: ${{ !cancelled() && success() }}
@@ -74,6 +74,7 @@ jobs:
         if: ${{ !cancelled() && success() }}
         uses: codecov/codecov-action@v5
         with:
+          files: coverage/junit.xml
           report_type: test_results
           fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
