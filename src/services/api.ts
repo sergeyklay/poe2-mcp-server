@@ -147,11 +147,27 @@ export function normalizeTrailingArabicToRoman(slug: string): string {
 }
 
 /**
- * Fetch HTML page from poe2db.tw for a given term (English or Russian).
+ * Supported language codes for poe2db.tw.
+ * - us: English
+ * - tw: Chinese Traditional (Taiwan)
+ * - cn: Chinese Simplified
+ * - kr: Korean
+ * - jp: Japanese
+ * - ru: Russian
+ * - de: German
+ * - fr: French
+ * - sp: Spanish
+ * - pt: Portuguese
+ * - th: Thai
+ */
+export type Poe2dbLang = 'us' | 'tw' | 'cn' | 'kr' | 'jp' | 'ru' | 'de' | 'fr' | 'sp' | 'pt' | 'th';
+
+/**
+ * Fetch HTML page from poe2db.tw for a given term.
  * Automatically normalizes trailing Arabic numerals to Roman (e.g. _2 → _II)
  * and retries with the original slug on 404 if normalization was applied.
  */
-export async function getPoe2dbPage(term: string, lang: 'us' | 'ru' = 'us'): Promise<string> {
+export async function getPoe2dbPage(term: string, lang: Poe2dbLang = 'us'): Promise<string> {
   const slug = term.replace(/\s+/g, '_');
   const normalizedSlug = normalizeTrailingArabicToRoman(slug);
   const headers = { 'User-Agent': USER_AGENT, Accept: 'text/html' };

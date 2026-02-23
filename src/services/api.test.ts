@@ -177,18 +177,18 @@ describe('getPoe2dbPage', () => {
     expect(fetch).toHaveBeenCalledWith('https://poe2db.tw/us/Essence_Drain', expect.any(Object));
   });
 
-  it('fetches Russian page when lang=ru', async () => {
+  it('fetches French page when lang=fr', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
         ok: true,
-        text: () => Promise.resolve('<html>контент</html>'),
+        text: () => Promise.resolve('<html>contenu</html>'),
       }),
     );
 
-    await getPoe2dbPage('Chaos_Bolt', 'ru');
+    await getPoe2dbPage('Chaos_Bolt', 'fr');
 
-    expect(fetch).toHaveBeenCalledWith('https://poe2db.tw/ru/Chaos_Bolt', expect.any(Object));
+    expect(fetch).toHaveBeenCalledWith('https://poe2db.tw/fr/Chaos_Bolt', expect.any(Object));
   });
 
   it('retries with original slug when normalized slug returns 404', async () => {
