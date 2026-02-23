@@ -3,7 +3,7 @@
  * No authentication required — all endpoints are public.
  */
 
-const USER_AGENT = 'poe2-mcp-server/1.0.0 (MCP; Claude Desktop integration)';
+const USER_AGENT = "poe2-mcp-server/1.0.0 (MCP; Claude Desktop integration)";
 
 /** Simple rate limiter: max N requests per window (ms). */
 class RateLimiter {
@@ -29,16 +29,19 @@ class RateLimiter {
 const ninjaLimiter = new RateLimiter(10, 5 * 60 * 1000);
 
 /** Generic JSON fetch with error handling. */
-export async function fetchJson<T>(url: string, limiter?: RateLimiter): Promise<T> {
+export async function fetchJson<T>(
+  url: string,
+  limiter?: RateLimiter,
+): Promise<T> {
   if (limiter) await limiter.wait();
   const res = await fetch(url, {
     headers: {
-      'User-Agent': USER_AGENT,
-      Accept: 'application/json',
+      "User-Agent": USER_AGENT,
+      Accept: "application/json",
     },
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
+    const body = await res.text().catch(() => "");
     throw new Error(`HTTP ${res.status} from ${url}: ${body.slice(0, 200)}`);
   }
   return res.json() as Promise<T>;
@@ -95,7 +98,7 @@ export interface BuildIndexStateResponse {
   leagueBuilds: BuildLeagueEntry[];
 }
 
-const NINJA_POE2_BASE = 'https://poe.ninja/poe2/api/economy';
+const NINJA_POE2_BASE = "https://poe.ninja/poe2/api/economy";
 
 /**
  * Fetch PoE2 exchange overview from poe.ninja.
@@ -115,24 +118,62 @@ export async function getNinjaExchangeOverview(
  * Returns class distribution statistics for all leagues.
  */
 export async function getNinjaBuildIndex(): Promise<BuildIndexStateResponse> {
-  const url = 'https://poe.ninja/poe2/api/data/build-index-state';
+  const url = "https://poe.ninja/poe2/api/data/build-index-state";
   return fetchJson<BuildIndexStateResponse>(url, ninjaLimiter);
 }
 
 // ─── poe2db.tw ─────────────────────────────────────────────────────────
 
+const ARABIC_TO_ROMAN: Record<string, string> = {
+  "1": "I",
+  "2": "II",
+  "3": "III",
+  "4": "IV",
+  "5": "V",
+  "6": "VI",
+  "7": "VII",
+  "8": "VIII",
+  "9": "IX",
+  "10": "X",
+};
+
+/**
+ * Convert a trailing Arabic numeral (after underscore) to Roman.
+ * e.g. "Urgent_Totems_2" → "Urgent_Totems_II"
+ * Returns the slug unchanged if no trailing numeral or numeral > 10.
+ */
+export function normalizeTrailingArabicToRoman(slug: string): string {
+  const match = /^(.+_)(\d+)$/.exec(slug);
+  if (!match) return slug;
+  const roman = ARABIC_TO_ROMAN[match[2]!];
+  return roman ? match[1]! + roman : slug;
+}
+
 /**
  * Fetch HTML page from poe2db.tw for a given term (English or Russian).
- * We parse the text content for gem/item details.
+ * Automatically normalizes trailing Arabic numerals to Roman (e.g. _2 → _II)
+ * and retries with the original slug on 404 if normalization was applied.
  */
-export async function getPoe2dbPage(term: string, lang: 'us' | 'ru' = 'us'): Promise<string> {
-  const slug = term.replace(/\s+/g, '_');
-  const url = `https://poe2db.tw/${lang}/${slug}`;
-  const res = await fetch(url, {
-    headers: { 'User-Agent': USER_AGENT, Accept: 'text/html' },
+export async function getPoe2dbPage(
+  term: string,
+  lang: "us" | "ru" = "us",
+): Promise<string> {
+  const slug = term.replace(/\s+/g, "_");
+  const normalizedSlug = normalizeTrailingArabicToRoman(slug);
+  const headers = { "User-Agent": USER_AGENT, Accept: "text/html" };
+
+  const res = await fetch(`https://poe2db.tw/${lang}/${normalizedSlug}`, {
+    headers,
   });
-  if (!res.ok) throw new Error(`poe2db returned ${res.status} for "${term}"`);
-  return res.text();
+
+  if (res.ok) return res.text();
+
+  if (res.status === 404 && normalizedSlug !== slug) {
+    const retry = await fetch(`https://poe2db.tw/${lang}/${slug}`, { headers });
+    if (retry.ok) return retry.text();
+  }
+
+  throw new Error(`poe2db returned ${res.status} for "${term}"`);
 }
 
 // ─── poe2wiki.net ──────────────────────────────────────────────────────
@@ -148,7 +189,9 @@ export interface WikiSearchResult {
  */
 export async function searchWiki(query: string): Promise<WikiSearchResult[]> {
   const url = `https://www.poe2wiki.net/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=5`;
-  const data = await fetchJson<{ query?: { search?: WikiSearchResult[] } }>(url);
+  const data = await fetchJson<{ query?: { search?: WikiSearchResult[] } }>(
+    url,
+  );
   return data.query?.search ?? [];
 }
 
@@ -157,13 +200,15 @@ export async function searchWiki(query: string): Promise<WikiSearchResult[]> {
  */
 export async function getWikiPage(title: string): Promise<string> {
   const url = `https://www.poe2wiki.net/w/api.php?action=parse&page=${encodeURIComponent(title)}&prop=wikitext&format=json`;
-  const data = await fetchJson<{ parse?: { wikitext?: { '*'?: string } } }>(url);
-  return data.parse?.wikitext?.['*'] ?? '';
+  const data = await fetchJson<{ parse?: { wikitext?: { "*"?: string } } }>(
+    url,
+  );
+  return data.parse?.wikitext?.["*"] ?? "";
 }
 
 // ─── RePoE data exports ────────────────────────────────────────────────
 
-const REPOE_BASE = 'https://repoe-fork.github.io/poe2';
+const REPOE_BASE = "https://repoe-fork.github.io/poe2";
 
 /**
  * Fetch datamined gem data from RePoE.
