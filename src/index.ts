@@ -9,6 +9,7 @@
  *  - Wiki search (poe2wiki.net)
  *  - Game database lookup (poe2db.tw)
  *  - Meta build overview (poe.ninja builds)
+ *  - Local logs parsing (Client.txt/LatestClient.txt)
  *
  * All data comes from public APIs — no GGG OAuth registration required.
  * Designed for use with Claude Desktop via stdio transport.
@@ -21,8 +22,24 @@ import { registerCurrencyTools } from './tools/currency.js';
 import { registerItemTools } from './tools/items.js';
 import { registerWikiTools } from './tools/wiki.js';
 import { registerBuildTools } from './tools/builds.js';
+import { registerLogfileTools } from './tools/logfile.js';
+
+/**
+ * Parse CLI arguments for --poe2-path.
+ * @returns PoE2 installation path if provided, undefined otherwise.
+ */
+function parsePoe2Path(): string | undefined {
+  const args = process.argv.slice(2);
+  const idx = args.indexOf('--poe2-path');
+  if (idx !== -1 && args[idx + 1]) {
+    return args[idx + 1];
+  }
+  return undefined;
+}
 
 async function main(): Promise<void> {
+  const poe2Path = parsePoe2Path();
+
   const server = new McpServer({
     name: 'poe2-mcp-server',
     version: '1.0.0',
@@ -33,6 +50,7 @@ async function main(): Promise<void> {
   registerItemTools(server);
   registerWikiTools(server);
   registerBuildTools(server);
+  registerLogfileTools(server, { poe2InstallPath: poe2Path });
 
   // Use stdio transport for Claude Desktop integration
   const transport = new StdioServerTransport();
