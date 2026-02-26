@@ -23,6 +23,7 @@ import { registerItemTools } from './tools/items.js';
 import { registerWikiTools } from './tools/wiki.js';
 import { registerBuildTools } from './tools/builds.js';
 import { registerLogfileTools } from './tools/logfile.js';
+import { registerPobTools } from './tools/pob.js';
 
 /**
  * Parse CLI arguments for --poe2-path.
@@ -37,8 +38,22 @@ function parsePoe2Path(): string | undefined {
   return undefined;
 }
 
+/**
+ * Parse CLI arguments for --pob2-path.
+ * @returns PoB2 Builds directory path if provided, undefined otherwise.
+ */
+function parsePob2Path(): string | undefined {
+  const args = process.argv.slice(2);
+  const idx = args.indexOf('--pob2-path');
+  if (idx !== -1 && args[idx + 1]) {
+    return args[idx + 1];
+  }
+  return undefined;
+}
+
 async function main(): Promise<void> {
   const poe2Path = parsePoe2Path();
+  const pob2Path = parsePob2Path();
 
   const server = new McpServer({
     name: 'poe2-mcp-server',
@@ -51,6 +66,7 @@ async function main(): Promise<void> {
   registerWikiTools(server);
   registerBuildTools(server);
   registerLogfileTools(server, { poe2InstallPath: poe2Path });
+  registerPobTools(server, { pob2BuildsPath: pob2Path });
 
   // Use stdio transport for Claude Desktop integration
   const transport = new StdioServerTransport();
