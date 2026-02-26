@@ -60,7 +60,7 @@ Add to your `claude_desktop_config.json`:
 >
 > To open the config file quickly, press `Win + R` and run:
 >
-> ```
+> ```cmd
 > notepad %APPDATA%\Claude\claude_desktop_config.json
 > ```
 
@@ -307,7 +307,7 @@ Default league: **Fate of the Vaal** (patch 0.4.x). Any active PoE2 league can b
 
 ## Architecture
 
-```
+```plaintext
 poe2-mcp-server/
 ├── src/
 │   ├── index.ts              # Entry point: server init, stdio transport

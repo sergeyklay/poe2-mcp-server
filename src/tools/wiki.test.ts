@@ -5,9 +5,17 @@ vi.mock('../services/api.js', () => ({
   searchWiki: vi.fn(),
   getWikiPage: vi.fn(),
   getPoe2dbPage: vi.fn(),
+  parsePoe2dbHtml: vi.fn(),
+  formatPoe2dbSections: vi.fn(),
 }));
 
-import { searchWiki, getWikiPage, getPoe2dbPage } from '../services/api.js';
+import {
+  searchWiki,
+  getWikiPage,
+  getPoe2dbPage,
+  parsePoe2dbHtml,
+  formatPoe2dbSections,
+} from '../services/api.js';
 import { registerWikiTools } from './wiki.js';
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
@@ -120,10 +128,13 @@ describe('poe2_db_lookup', () => {
     handler = extractHandlers().get('poe2_db_lookup')!;
   });
 
-  it('strips HTML tags and dangerous elements', async () => {
+  it('strips HTML tags and dangerous elements via fallback', async () => {
     vi.mocked(getPoe2dbPage).mockResolvedValue(
       '<script>alert(1)</script><nav>nav</nav><div>useful data</div><style>.x{}</style>',
     );
+    vi.mocked(parsePoe2dbHtml).mockImplementation(() => {
+      throw new Error('Parse failed');
+    });
 
     const result = await handler({ term: 'Fireball', lang: 'us' });
 
@@ -133,16 +144,22 @@ describe('poe2_db_lookup', () => {
     expect(result.content[0]!.text).toContain('useful data');
   });
 
-  it('decodes HTML entities', async () => {
+  it('decodes HTML entities via fallback', async () => {
     vi.mocked(getPoe2dbPage).mockResolvedValue('<p>10 &amp; 20 &gt; 5 &lt; 30</p>');
+    vi.mocked(parsePoe2dbHtml).mockImplementation(() => {
+      throw new Error('Parse failed');
+    });
 
     const result = await handler({ term: 'Test', lang: 'us' });
 
     expect(result.content[0]!.text).toContain('10 & 20 > 5 < 30');
   });
 
-  it('truncates long content', async () => {
+  it('truncates long content via fallback', async () => {
     vi.mocked(getPoe2dbPage).mockResolvedValue('<p>' + 'a'.repeat(8000) + '</p>');
+    vi.mocked(parsePoe2dbHtml).mockImplementation(() => {
+      throw new Error('Parse failed');
+    });
 
     const result = await handler({ term: 'Big', lang: 'us' });
 
@@ -160,5 +177,86 @@ describe('poe2_db_lookup', () => {
     expect(result.content[0]!.text).toContain('Roman numerals');
     expect(result.content[0]!.text).toContain('Urgent_Totems_II');
     expect(result.content[0]!.text).toContain('rank suffix');
+  });
+
+  it('uses structured parsing with formatPoe2dbSections', async () => {
+    vi.mocked(getPoe2dbPage).mockResolvedValue('<html><body>content</body></html>');
+    vi.mocked(parsePoe2dbHtml).mockReturnValue({
+      title: 'Essence Drain',
+      description: 'A chaos spell',
+      stats: 'Chaos, Spell',
+      sections: new Map(),
+    });
+    vi.mocked(formatPoe2dbSections).mockReturnValue(
+      '## poe2db: Essence Drain (us)\nFormatted content',
+    );
+
+    const result = await handler({ term: 'Essence_Drain', lang: 'us' });
+
+    expect(parsePoe2dbHtml).toHaveBeenCalledWith('<html><body>content</body></html>');
+    expect(formatPoe2dbSections).toHaveBeenCalled();
+    expect(result.content[0]!.text).toContain('## poe2db: Essence Drain (us)');
+  });
+
+  it('passes sections parameter to formatPoe2dbSections', async () => {
+    vi.mocked(getPoe2dbPage).mockResolvedValue('<html></html>');
+    vi.mocked(parsePoe2dbHtml).mockReturnValue({
+      title: 'Test',
+      description: '',
+      stats: '',
+      sections: new Map(),
+    });
+    vi.mocked(formatPoe2dbSections).mockReturnValue('formatted');
+
+    await handler({
+      term: 'Test',
+      lang: 'us',
+      sections: ['description', 'levels'],
+    });
+
+    expect(formatPoe2dbSections).toHaveBeenCalledWith(
+      expect.anything(),
+      'Test',
+      'us',
+      ['description', 'levels'],
+      undefined,
+    );
+  });
+
+  it('passes level_range parameter to formatPoe2dbSections', async () => {
+    vi.mocked(getPoe2dbPage).mockResolvedValue('<html></html>');
+    vi.mocked(parsePoe2dbHtml).mockReturnValue({
+      title: 'Test',
+      description: '',
+      stats: '',
+      sections: new Map(),
+    });
+    vi.mocked(formatPoe2dbSections).mockReturnValue('formatted');
+
+    await handler({
+      term: 'Test',
+      lang: 'us',
+      sections: ['levels'],
+      level_range: { min: 10, max: 15 },
+    });
+
+    expect(formatPoe2dbSections).toHaveBeenCalledWith(expect.anything(), 'Test', 'us', ['levels'], {
+      min: 10,
+      max: 15,
+    });
+  });
+
+  it('falls back to naive strip when parsing fails', async () => {
+    vi.mocked(getPoe2dbPage).mockResolvedValue(
+      '<html><body><div>Fallback content</div></body></html>',
+    );
+    vi.mocked(parsePoe2dbHtml).mockImplementation(() => {
+      throw new Error('Parse error');
+    });
+
+    const result = await handler({ term: 'Test', lang: 'us' });
+
+    expect(result.content[0]!.text).toContain('Fallback content');
+    expect(result.isError).toBeUndefined();
   });
 });

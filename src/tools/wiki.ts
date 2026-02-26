@@ -1,6 +1,25 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { searchWiki, getWikiPage, getPoe2dbPage } from '../services/api.js';
+import {
+  searchWiki,
+  getWikiPage,
+  getPoe2dbPage,
+  parsePoe2dbHtml,
+  formatPoe2dbSections,
+} from '../services/api.js';
+
+/** Section filter enum for poe2_db_lookup. */
+const Poe2dbSectionEnum = z.enum([
+  'description',
+  'stats',
+  'supports',
+  'supports_full',
+  'acquisition',
+  'levels',
+  'history',
+  'microtransactions',
+  'monsters',
+]);
 
 export function registerWikiTools(server: McpServer): void {
   // ── poe2_wiki_search ──────────────────────────────────────────────
@@ -146,15 +165,18 @@ Always include the rank suffix if the user mentions a specific rank.
 Args:
   - term (string): English name of an item, gem, mod, etc. Use underscores for spaces, e.g. "Essence_Drain", "Chaos_Bolt". For ranked skills/passives, append Roman numeral: "Urgent_Totems_II", "War_Cry_III".
   - lang: Language code — "us" (English, default), "tw" (Traditional Chinese), "cn" (Simplified Chinese), "kr" (Korean), "jp" (Japanese), "ru" (Russian), "de" (German), "fr" (French), "sp" (Spanish), "pt" (Portuguese), "th" (Thai)
+  - sections (optional): Array of sections to include. Defaults to ["description", "stats", "supports", "acquisition"]. Options: "description", "stats", "supports", "supports_full", "acquisition", "levels", "history", "microtransactions", "monsters".
+  - level_range (optional): For "levels" section — specify {min, max} to get specific level stats. Default shows level 1 only.
 
-Returns: Raw page content from poe2db (HTML stripped to text, truncated at 6000 chars).
+Returns: Focused markdown content with requested sections only.
 
 Examples:
   - Gem details: term="Essence_Drain"
-  - Passive rank 2: term="Urgent_Totems_II" (NOT "Urgent_Totems_2" or "Urgent_Totems")
+  - Gem with specific levels: term="Essence_Drain", sections=["description", "stats", "levels"], level_range={min: 10, max: 12}
+  - Full support gem list: term="Chaos_Bolt", sections=["description", "supports_full"]
+  - Passive rank 2: term="Urgent_Totems_II"
   - Ascendancy node rank 3: term="War_Cry_III"
   - French name: term="Chaos_Bolt", lang="fr"
-  - German name: term="Essence_Drain", lang="de"
   - Unique item: term="Atziri's_Rule"`,
       inputSchema: {
         term: z
@@ -169,6 +191,23 @@ Examples:
           .describe(
             'Language: us=English, tw=Traditional Chinese, cn=Simplified Chinese, kr=Korean, jp=Japanese, ru=Russian, de=German, fr=French, sp=Spanish, pt=Portuguese, th=Thai',
           ),
+        sections: z
+          .array(Poe2dbSectionEnum)
+          .optional()
+          .describe(
+            'Sections to include. Defaults to ["description", "stats", "supports", "acquisition"]. ' +
+              'Use "levels" with level_range for gem scaling. ' +
+              'Use "supports_full" for complete support gem list.',
+          ),
+        level_range: z
+          .object({
+            min: z.number().int().min(1).max(40),
+            max: z.number().int().min(1).max(40),
+          })
+          .optional()
+          .describe(
+            'Level range for "levels" section. Example: {min: 10, max: 12} returns levels 10-12 only.',
+          ),
       },
       annotations: {
         readOnlyHint: true,
@@ -177,38 +216,53 @@ Examples:
         openWorldHint: true,
       },
     },
-    async ({ term, lang }) => {
+    async ({ term, lang, sections, level_range }) => {
       try {
         const html = await getPoe2dbPage(term, lang);
 
-        // Strip HTML to get meaningful text
-        let text = html
-          .replace(/<script[\s\S]*?<\/script>/gi, '')
-          .replace(/<style[\s\S]*?<\/style>/gi, '')
-          .replace(/<nav[\s\S]*?<\/nav>/gi, '')
-          .replace(/<footer[\s\S]*?<\/footer>/gi, '')
-          .replace(/<header[\s\S]*?<\/header>/gi, '')
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/&nbsp;/g, ' ')
-          .replace(/&amp;/g, '&')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/\s+/g, ' ')
-          .trim();
+        // Try structured parsing first
+        try {
+          const parsed = parsePoe2dbHtml(html);
+          const text = formatPoe2dbSections(parsed, term, lang, sections, level_range);
+          return {
+            content: [{ type: 'text', text }],
+          };
+        } catch (parseError) {
+          // Log parsing error to stderr (stdout reserved for MCP)
+          console.error(
+            'poe2db parsing failed, falling back to naive strip:',
+            parseError instanceof Error ? parseError.message : parseError,
+          );
 
-        if (text.length > 6000) {
-          text = text.slice(0, 6000) + '\n\n... [truncated]';
+          // Fallback: naive HTML stripping
+          let text = html
+            .replace(/<script[\s\S]*?<\/script>/gi, '')
+            .replace(/<style[\s\S]*?<\/style>/gi, '')
+            .replace(/<nav[\s\S]*?<\/nav>/gi, '')
+            .replace(/<footer[\s\S]*?<\/footer>/gi, '')
+            .replace(/<header[\s\S]*?<\/header>/gi, '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+          if (text.length > 6000) {
+            text = text.slice(0, 6000) + '\n\n... [truncated]';
+          }
+
+          const url = `https://poe2db.tw/${lang}/${encodeURIComponent(term.replace(/\s+/g, '_'))}`;
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `## poe2db: ${term} (${lang})\n🔗 ${url}\n\n${text}\n\n(Structured parsing unavailable — showing raw content)`,
+              },
+            ],
+          };
         }
-
-        const url = `https://poe2db.tw/${lang}/${term.replace(/\s+/g, '_')}`;
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `## poe2db: ${term} (${lang})\n🔗 ${url}\n\n${text}`,
-            },
-          ],
-        };
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return {
