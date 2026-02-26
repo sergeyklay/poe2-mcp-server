@@ -3,6 +3,7 @@
  * No authentication required — all endpoints are public.
  */
 
+import * as cheerio from 'cheerio';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -192,6 +193,328 @@ export async function getPoe2dbPage(term: string, lang: Poe2dbLang = 'us'): Prom
   }
 
   throw new Error(`poe2db returned ${res.status} for "${term}"`);
+}
+
+// ─── poe2db Section Parsing ───────────────────────────────────────────
+
+/**
+ * Represents a parsed section from a poe2db HTML page.
+ */
+export interface Poe2dbSection {
+  /** Section identifier (e.g., "Microtransactions", "Level Effect") */
+  id: string;
+  /** Human-readable header text (e.g., "Level Effect /40") */
+  header: string;
+  /** Extracted text content (HTML stripped, whitespace normalized) */
+  content: string;
+  /** Estimated item count from header (e.g., 40 from "Level Effect /40") */
+  itemCount: number | null;
+}
+
+/**
+ * Parsed poe2db page with structured sections.
+ */
+export interface Poe2dbParsedPage {
+  /** Page title/name */
+  title: string;
+  /** Main description text (first card body or intro text) */
+  description: string;
+  /** Base stats, requirements, tags from the stats section */
+  stats: string;
+  /** Named sections extracted from card-header elements */
+  sections: Map<string, Poe2dbSection>;
+}
+
+/**
+ * Section filter configuration for poe2db output.
+ */
+export type Poe2dbSectionFilter =
+  | 'description'
+  | 'stats'
+  | 'supports'
+  | 'supports_full'
+  | 'acquisition'
+  | 'levels'
+  | 'history'
+  | 'microtransactions'
+  | 'monsters';
+
+/** Default sections to include when none specified. */
+const DEFAULT_POE2DB_SECTIONS: Poe2dbSectionFilter[] = [
+  'description',
+  'stats',
+  'supports',
+  'acquisition',
+];
+
+/** Map raw poe2db section header names to filter keys. */
+const POE2DB_SECTION_MAP: Record<string, Poe2dbSectionFilter> = {
+  'Recommended Support Gems': 'supports',
+  'Supported By': 'supports_full',
+  From: 'acquisition',
+  'Level Effect': 'levels',
+  Attribute: 'stats',
+  'Version history': 'history',
+  Microtransactions: 'microtransactions',
+};
+
+/**
+ * Map a raw section header name to its filter key.
+ * Handles patterns like "{Name} Attr" → stats, "{Name} Monster" → monsters.
+ */
+function mapSectionName(rawName: string): Poe2dbSectionFilter | null {
+  // Direct match
+  if (rawName in POE2DB_SECTION_MAP) {
+    return POE2DB_SECTION_MAP[rawName]!;
+  }
+
+  // Pattern matches
+  if (rawName.endsWith(' Attr')) {
+    return 'stats';
+  }
+  if (rawName.endsWith(' Monster')) {
+    return 'monsters';
+  }
+
+  return null;
+}
+
+/**
+ * Filter level rows to a specific range.
+ * Extracts only the levels within min..max from the content.
+ */
+function filterLevelRows(content: string, levelRange: { min: number; max: number }): string {
+  const lines = content.split(/\n/);
+  const filtered: string[] = [];
+
+  for (const line of lines) {
+    // Match patterns like "Level 10:" or "10 " at start of line
+    const levelMatch = /^(?:Level\s+)?(\d+)[\s:]/i.exec(line.trim());
+    if (levelMatch) {
+      const level = parseInt(levelMatch[1]!, 10);
+      if (level >= levelRange.min && level <= levelRange.max) {
+        filtered.push(line);
+      }
+    } else if (filtered.length > 0) {
+      // Include continuation lines after a matched level
+      if (line.trim().startsWith('-') || line.trim().startsWith('+')) {
+        filtered.push(line);
+      }
+    }
+  }
+
+  return filtered.length > 0 ? filtered.join('\n') : `Level ${levelRange.min} data not found`;
+}
+
+/**
+ * Truncate content to first N entries (lines or items).
+ */
+function truncateEntries(content: string, maxEntries: number): string {
+  const lines = content.split(/\n/).filter((l) => l.trim() !== '');
+  if (lines.length <= maxEntries) {
+    return content;
+  }
+  return lines.slice(0, maxEntries).join('\n') + `\n... and ${lines.length - maxEntries} more`;
+}
+
+/**
+ * Parse poe2db HTML into structured sections using Cheerio.
+ *
+ * @param html - Raw HTML from poe2db.tw
+ * @returns Parsed page with sections map
+ */
+export function parsePoe2dbHtml(html: string): Poe2dbParsedPage {
+  const $ = cheerio.load(html);
+
+  // Remove noise elements
+  $('script, style, nav, footer, header, noscript, .ad-container, #consent-box').remove();
+
+  // Extract title from og:title meta tag or h1
+  const ogTitle = $('meta[property="og:title"]').attr('content');
+  const h1Title = $('h1').first().text().trim();
+  const pageTitle = $('title').text().split('-')[0]?.trim();
+  const title = ogTitle ?? (h1Title || pageTitle || 'Unknown');
+
+  // Extract main description from og:description meta tag (most reliable)
+  const ogDescription = $('meta[property="og:description"]').attr('content') ?? '';
+
+  // Also try to get description from first gemPopup or item-popup
+  const gemPopupDesc = $('.gemPopup .explicitMod, .item-popup--poe2 .explicitMod')
+    .first()
+    .text()
+    .trim();
+
+  const description = ogDescription || gemPopupDesc || '';
+
+  // Initialize sections map
+  const sections = new Map<string, Poe2dbSection>();
+  let stats = '';
+
+  // Extract gem/item stats from the first popup
+  const gemStats: string[] = [];
+  $('.gemPopup, .item-popup--poe2')
+    .first()
+    .find('.property, .explicitMod, .implicitMod')
+    .each((_, el) => {
+      const text = $(el).text().trim();
+      if (text && !text.includes('Edit') && text.length < 200) {
+        gemStats.push(text);
+      }
+    });
+  if (gemStats.length > 0) {
+    stats = gemStats.join('\n');
+  }
+
+  // Parse each card-header section
+  $('.card-header').each((_, el) => {
+    const headerText = $(el).text().trim();
+
+    // Skip empty headers or noise
+    if (!headerText || headerText.length < 2) return;
+
+    // Parse section name and item count from "Name /N" format
+    const match = /^(.+?)\s*\/(\d+)\s*$/.exec(headerText);
+    const rawName = match?.[1]?.trim() ?? headerText;
+    const itemCount = match?.[2] ? parseInt(match[2], 10) : null;
+
+    // Get content from next sibling card-body or table
+    let content = '';
+    const nextSibling = $(el).next();
+    if (nextSibling.hasClass('card-body')) {
+      content = nextSibling.text().trim();
+    } else if (nextSibling.is('table') || nextSibling.hasClass('table-responsive')) {
+      content = nextSibling.text().trim();
+    } else {
+      // Try to get content from the card-body within parent
+      content = $(el).parent().find('.card-body').first().text().trim();
+    }
+
+    // Map to filter key
+    const filterKey = mapSectionName(rawName);
+    if (filterKey) {
+      sections.set(filterKey, {
+        id: rawName,
+        header: headerText,
+        content,
+        itemCount,
+      });
+
+      // Also capture stats separately if from Attribute section
+      if (filterKey === 'stats' && !stats) {
+        stats = content;
+      }
+    }
+  });
+
+  return { title, description, stats, sections };
+}
+
+/**
+ * Filter and format parsed sections based on requested filters.
+ *
+ * @param page - Parsed page structure
+ * @param term - Search term (for URL generation)
+ * @param lang - Language code
+ * @param sections - Section filters to include (defaults to essential set)
+ * @param levelRange - Optional level range for "levels" section
+ * @returns Formatted markdown string
+ */
+export function formatPoe2dbSections(
+  page: Poe2dbParsedPage,
+  term: string,
+  lang: Poe2dbLang,
+  sections?: Poe2dbSectionFilter[],
+  levelRange?: { min: number; max: number },
+): string {
+  const filters = sections ?? DEFAULT_POE2DB_SECTIONS;
+  const url = `https://poe2db.tw/${lang}/${encodeURIComponent(term.replace(/\s+/g, '_'))}`;
+
+  const output: string[] = [`## poe2db: ${page.title} (${lang})`, `🔗 ${url}`, ''];
+
+  // Description
+  if (filters.includes('description') && page.description) {
+    output.push(page.description, '');
+  }
+
+  // Stats
+  if (filters.includes('stats') && page.stats) {
+    output.push('### Stats', page.stats, '');
+  }
+
+  // Acquisition
+  if (filters.includes('acquisition')) {
+    const section = page.sections.get('acquisition');
+    if (section) {
+      output.push(`### ${section.id}`, section.content, '');
+    }
+  }
+
+  // Recommended supports (truncated to 5)
+  if (filters.includes('supports')) {
+    const section = page.sections.get('supports');
+    if (section) {
+      const truncated = truncateEntries(section.content, 5);
+      output.push('### Recommended Support Gems', truncated, '');
+    }
+  }
+
+  // Full supports list
+  if (filters.includes('supports_full')) {
+    const section = page.sections.get('supports_full');
+    if (section) {
+      const count = section.itemCount ?? 0;
+      if (count > 50) {
+        output.push(
+          `### Supported By (${count} gems)`,
+          `⚠️ Large list (${count} entries). Showing first 50.`,
+          truncateEntries(section.content, 50),
+          '',
+        );
+      } else {
+        output.push(`### Supported By`, section.content, '');
+      }
+    }
+  }
+
+  // Level scaling
+  if (filters.includes('levels')) {
+    const section = page.sections.get('levels');
+    if (section) {
+      const range = levelRange ?? { min: 1, max: 1 };
+      const filtered = filterLevelRows(section.content, range);
+      const header =
+        range.min === range.max
+          ? `### Level ${range.min} Stats`
+          : `### Levels ${range.min}-${range.max}`;
+      output.push(header, filtered, '');
+    }
+  }
+
+  // Version history
+  if (filters.includes('history')) {
+    const section = page.sections.get('history');
+    if (section) {
+      output.push('### Version History', section.content, '');
+    }
+  }
+
+  // Microtransactions (explicitly requested only)
+  if (filters.includes('microtransactions')) {
+    const section = page.sections.get('microtransactions');
+    if (section) {
+      output.push('### Microtransactions', section.content, '');
+    }
+  }
+
+  // Monsters (explicitly requested only)
+  if (filters.includes('monsters')) {
+    const section = page.sections.get('monsters');
+    if (section) {
+      output.push('### Monsters Using This', section.content, '');
+    }
+  }
+
+  return output.join('\n').trim();
 }
 
 // ─── poe2wiki.net ──────────────────────────────────────────────────────

@@ -16,8 +16,12 @@ import {
   parseItemText,
   parsePobXml,
   comparePobBuilds,
+  parsePoe2dbHtml,
+  formatPoe2dbSections,
   type PobBuild,
   type PobItem,
+  type Poe2dbParsedPage,
+  type Poe2dbSectionFilter,
 } from './api.js';
 
 beforeEach(() => {
@@ -1069,5 +1073,328 @@ describe('comparePobBuilds', () => {
     const result = comparePobBuilds(build, build);
 
     expect(result.summary).toContain('match closely');
+  });
+});
+
+describe('parsePoe2dbHtml', () => {
+  it('extracts title from og:title meta tag', () => {
+    const html = `
+      <html>
+        <head>
+          <meta property="og:title" content="Essence Drain">
+          <title>Essence Drain - poe2db</title>
+        </head>
+        <body><h1>Different Title</h1></body>
+      </html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.title).toBe('Essence Drain');
+  });
+
+  it('falls back to h1 then page title when og:title missing', () => {
+    const htmlWithH1 = `<html><head><title>Page - poe2db</title></head><body><h1>H1 Title</h1></body></html>`;
+
+    const result = parsePoe2dbHtml(htmlWithH1);
+
+    expect(result.title).toBe('H1 Title');
+  });
+
+  it('extracts description from og:description meta tag', () => {
+    const html = `
+      <html>
+        <head>
+          <meta property="og:description" content="Fires a chaos projectile.">
+        </head>
+        <body></body>
+      </html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.description).toBe('Fires a chaos projectile.');
+  });
+
+  it('extracts gem stats from gemPopup elements', () => {
+    const html = `
+      <html><body>
+        <div class="gemPopup">
+          <span class="property">Level: 1</span>
+          <span class="explicitMod">+10 to Intelligence</span>
+        </div>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.stats).toContain('Level: 1');
+    expect(result.stats).toContain('+10 to Intelligence');
+  });
+
+  it('parses card-header sections with item counts', () => {
+    const html = `
+      <html><body>
+        <div class="card-header">Level Effect /40</div>
+        <div class="card-body">Level 1: +5 damage</div>
+        <div class="card-header">From /3</div>
+        <div class="card-body">Quest Reward</div>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.sections.get('levels')).toBeDefined();
+    expect(result.sections.get('levels')?.itemCount).toBe(40);
+    expect(result.sections.get('acquisition')).toBeDefined();
+    expect(result.sections.get('acquisition')?.content).toBe('Quest Reward');
+  });
+
+  it('maps section names to filter keys correctly', () => {
+    const html = `
+      <html><body>
+        <div class="card-header">Recommended Support Gems /10</div>
+        <div class="card-body">Swift Affliction</div>
+        <div class="card-header">Version history /5</div>
+        <div class="card-body">0.4.0: Added</div>
+        <div class="card-header">Microtransactions /2</div>
+        <div class="card-body">Skin MTX</div>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.sections.get('supports')).toBeDefined();
+    expect(result.sections.get('history')).toBeDefined();
+    expect(result.sections.get('microtransactions')).toBeDefined();
+  });
+
+  it('handles pattern-based section mapping (Attr suffix)', () => {
+    const html = `
+      <html><body>
+        <div class="card-header">Essence Drain Attr /4</div>
+        <div class="card-body">Chaos, Spell, Projectile</div>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.sections.get('stats')).toBeDefined();
+    expect(result.sections.get('stats')?.content).toContain('Chaos');
+  });
+
+  it('removes script/style/nav elements', () => {
+    const html = `
+      <html><body>
+        <script>alert('xss')</script>
+        <style>.foo{}</style>
+        <nav>Navigation</nav>
+        <div class="card-header">From /1</div>
+        <div class="card-body">Quest</div>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.sections.get('acquisition')?.content).toBe('Quest');
+  });
+});
+
+describe('formatPoe2dbSections', () => {
+  const createParsedPage = (overrides?: Partial<Poe2dbParsedPage>): Poe2dbParsedPage => ({
+    title: 'Test Gem',
+    description: 'A test spell.',
+    stats: 'Chaos, Spell',
+    sections: new Map(),
+    ...overrides,
+  });
+
+  it('formats default sections (description, stats, supports, acquisition)', () => {
+    const sections = new Map([
+      [
+        'supports',
+        {
+          id: 'Recommended Support Gems',
+          header: 'Recommended Support Gems /10',
+          content: 'GMP\nSwift',
+          itemCount: 10,
+        },
+      ],
+      ['acquisition', { id: 'From', header: 'From /2', content: 'Quest Reward', itemCount: 2 }],
+    ]);
+    const page = createParsedPage({ sections });
+
+    const result = formatPoe2dbSections(page, 'Test_Gem', 'us');
+
+    expect(result).toContain('## poe2db: Test Gem (us)');
+    expect(result).toContain('A test spell.');
+    expect(result).toContain('### Stats');
+    expect(result).toContain('Chaos, Spell');
+    expect(result).toContain('### Recommended Support Gems');
+    expect(result).toContain('### From');
+  });
+
+  it('filters to only requested sections', () => {
+    const sections = new Map([
+      [
+        'supports',
+        {
+          id: 'Recommended Support Gems',
+          header: 'Recommended Support Gems /10',
+          content: 'GMP',
+          itemCount: 10,
+        },
+      ],
+      ['acquisition', { id: 'From', header: 'From /2', content: 'Quest', itemCount: 2 }],
+      [
+        'history',
+        { id: 'Version history', header: 'Version history /5', content: 'Changes', itemCount: 5 },
+      ],
+    ]);
+    const page = createParsedPage({ sections });
+
+    const result = formatPoe2dbSections(page, 'Test_Gem', 'us', ['description', 'history']);
+
+    expect(result).toContain('A test spell.');
+    expect(result).toContain('### Version History');
+    expect(result).not.toContain('### Stats');
+    expect(result).not.toContain('### Recommended Support Gems');
+  });
+
+  it('truncates supports section to 5 entries', () => {
+    const supportsList =
+      'GMP\nSwift Affliction\nControlled Destruction\nVoid Manipulation\nEfficacy\nArcane Surge\nSpell Echo';
+    const sections = new Map([
+      [
+        'supports',
+        {
+          id: 'Recommended Support Gems',
+          header: 'Recommended Support Gems /7',
+          content: supportsList,
+          itemCount: 7,
+        },
+      ],
+    ]);
+    const page = createParsedPage({ sections });
+
+    const result = formatPoe2dbSections(page, 'Test_Gem', 'us', ['supports']);
+
+    expect(result).toContain('... and 2 more');
+    expect(result).not.toContain('Spell Echo');
+  });
+
+  it('shows warning for large supports_full section', () => {
+    const sections = new Map([
+      [
+        'supports_full',
+        {
+          id: 'Supported By',
+          header: 'Supported By /187',
+          content: 'Gem1\nGem2\n...',
+          itemCount: 187,
+        },
+      ],
+    ]);
+    const page = createParsedPage({ sections });
+
+    const result = formatPoe2dbSections(page, 'Test_Gem', 'us', ['supports_full']);
+
+    expect(result).toContain('⚠️ Large list (187 entries)');
+    expect(result).toContain('Showing first 50');
+  });
+
+  it('filters levels section by level_range', () => {
+    const levelsContent =
+      'Level 1: +5 damage\nLevel 2: +10 damage\nLevel 10: +50 damage\nLevel 11: +55 damage\nLevel 12: +60 damage';
+    const sections = new Map([
+      [
+        'levels',
+        { id: 'Level Effect', header: 'Level Effect /40', content: levelsContent, itemCount: 40 },
+      ],
+    ]);
+    const page = createParsedPage({ sections });
+
+    const result = formatPoe2dbSections(page, 'Test_Gem', 'us', ['levels'], { min: 10, max: 12 });
+
+    expect(result).toContain('### Levels 10-12');
+    expect(result).toContain('Level 10');
+    expect(result).toContain('Level 11');
+    expect(result).toContain('Level 12');
+    expect(result).not.toContain('Level 1:');
+    expect(result).not.toContain('Level 2:');
+  });
+
+  it('shows single level header when min equals max', () => {
+    const levelsContent = 'Level 20: +100 damage';
+    const sections = new Map([
+      [
+        'levels',
+        { id: 'Level Effect', header: 'Level Effect /40', content: levelsContent, itemCount: 40 },
+      ],
+    ]);
+    const page = createParsedPage({ sections });
+
+    const result = formatPoe2dbSections(page, 'Test_Gem', 'us', ['levels'], { min: 20, max: 20 });
+
+    expect(result).toContain('### Level 20 Stats');
+  });
+
+  it('generates correct URL with encoded term', () => {
+    const page = createParsedPage({ title: 'Chaos Bolt' });
+
+    const result = formatPoe2dbSections(page, 'Chaos Bolt', 'us', ['description']);
+
+    expect(result).toContain('https://poe2db.tw/us/Chaos_Bolt');
+  });
+
+  it('formats all section types when explicitly requested', () => {
+    const sections = new Map([
+      [
+        'supports',
+        {
+          id: 'Recommended Support Gems',
+          header: 'Recommended Support Gems /5',
+          content: 'GMP',
+          itemCount: 5,
+        },
+      ],
+      ['acquisition', { id: 'From', header: 'From /2', content: 'Quest', itemCount: 2 }],
+      [
+        'levels',
+        { id: 'Level Effect', header: 'Level Effect /40', content: 'Level 1: data', itemCount: 40 },
+      ],
+      [
+        'history',
+        { id: 'Version history', header: 'Version history /3', content: 'Changed', itemCount: 3 },
+      ],
+      [
+        'microtransactions',
+        { id: 'Microtransactions', header: 'Microtransactions /1', content: 'Skin', itemCount: 1 },
+      ],
+      [
+        'monsters',
+        { id: 'Test Monster', header: 'Test Monster /2', content: 'Boss', itemCount: 2 },
+      ],
+    ]);
+    const page = createParsedPage({ sections });
+    const allSections: Poe2dbSectionFilter[] = [
+      'description',
+      'stats',
+      'supports',
+      'acquisition',
+      'levels',
+      'history',
+      'microtransactions',
+      'monsters',
+    ];
+
+    const result = formatPoe2dbSections(page, 'Test_Gem', 'us', allSections);
+
+    expect(result).toContain('### Recommended Support Gems');
+    expect(result).toContain('### From');
+    expect(result).toContain('### Level 1 Stats');
+    expect(result).toContain('### Version History');
+    expect(result).toContain('### Microtransactions');
+    expect(result).toContain('### Monsters Using This');
   });
 });
