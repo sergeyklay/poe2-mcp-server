@@ -4,6 +4,7 @@
  */
 
 import * as cheerio from 'cheerio';
+import type { Element } from 'domhandler';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -253,7 +254,6 @@ const POE2DB_SECTION_MAP: Record<string, Poe2dbSectionFilter> = {
   'Supported By': 'supports_full',
   From: 'acquisition',
   'Level Effect': 'levels',
-  Attribute: 'stats',
   'Version history': 'history',
   Microtransactions: 'microtransactions',
 };
@@ -282,39 +282,236 @@ function mapSectionName(rawName: string): Poe2dbSectionFilter | null {
 /**
  * Filter level rows to a specific range.
  * Extracts only the levels within min..max from the content.
+ * Handles both newline-separated and tab-separated table formats.
  */
 function filterLevelRows(content: string, levelRange: { min: number; max: number }): string {
   const lines = content.split(/\n/);
   const filtered: string[] = [];
+  let headerLine = '';
 
   for (const line of lines) {
-    // Match patterns like "Level 10:" or "10 " at start of line
-    const levelMatch = /^(?:Level\s+)?(\d+)[\s:]/i.exec(line.trim());
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Try to extract level from the first column (tab-separated or space-separated)
+    const columns = trimmed.split(/\t/);
+    const firstCol = columns[0]?.trim() ?? '';
+
+    // Check if this is a header row
+    if (firstCol.toLowerCase() === 'level' || firstCol.toLowerCase().startsWith('levelrequires')) {
+      headerLine = trimmed;
+      continue;
+    }
+
+    // Try to parse level number from first column
+    const levelMatch = /^(\d+)/.exec(firstCol);
     if (levelMatch) {
       const level = parseInt(levelMatch[1]!, 10);
       if (level >= levelRange.min && level <= levelRange.max) {
-        filtered.push(line);
-      }
-    } else if (filtered.length > 0) {
-      // Include continuation lines after a matched level
-      if (line.trim().startsWith('-') || line.trim().startsWith('+')) {
-        filtered.push(line);
+        filtered.push(trimmed);
       }
     }
   }
 
-  return filtered.length > 0 ? filtered.join('\n') : `Level ${levelRange.min} data not found`;
+  if (filtered.length === 0) {
+    return `Level ${levelRange.min} data not found`;
+  }
+
+  // Include header if found
+  if (headerLine) {
+    return headerLine + '\n' + filtered.join('\n');
+  }
+  return filtered.join('\n');
 }
 
 /**
- * Truncate content to first N entries (lines or items).
+ * Format tab-separated table content into a readable markdown table.
+ * Handles content like "Col1\tCol2\nVal1\tVal2" into proper markdown tables.
  */
-function truncateEntries(content: string, maxEntries: number): string {
+function formatTableContent(content: string): string {
   const lines = content.split(/\n/).filter((l) => l.trim() !== '');
-  if (lines.length <= maxEntries) {
-    return content;
+  if (lines.length === 0) return content;
+
+  // Check if content is tab-separated
+  if (!lines.some((l) => l.includes('\t'))) {
+    return content; // Not a table, return as-is
   }
-  return lines.slice(0, maxEntries).join('\n') + `\n... and ${lines.length - maxEntries} more`;
+
+  const rows = lines.map((line) => line.split('\t').map((cell) => cell.trim()));
+  if (rows.length === 0) return content;
+
+  // Build markdown table
+  const output: string[] = [];
+  const header = rows[0];
+  output.push('| ' + header.join(' | ') + ' |');
+  output.push('| ' + header.map(() => '---').join(' | ') + ' |');
+
+  for (let i = 1; i < rows.length; i++) {
+    // Pad row to match header length
+    const row = rows[i];
+    while (row.length < header.length) row.push('');
+    output.push('| ' + row.join(' | ') + ' |');
+  }
+
+  return output.join('\n');
+}
+
+// ─── Poe2db HTML Parsing Helpers ────────────────────────────────────────────
+
+/** Remove noise elements (scripts, styles, nav, ads, etc.) from the DOM. */
+function cleanHtmlNoise($: cheerio.CheerioAPI): void {
+  $('script, style, nav, footer, header, noscript, .ad-container, #consent-box').remove();
+}
+
+/** Extract title with fallback chain: og:title → h1 → page title → 'Unknown'. */
+function extractTitle($: cheerio.CheerioAPI): string {
+  const ogTitle = $('meta[property="og:title"]').attr('content');
+  if (ogTitle) return ogTitle;
+
+  const h1Title = $('h1').first().text().trim();
+  if (h1Title) return h1Title;
+
+  const pageTitle = $('title').text().split('-')[0]?.trim();
+  return pageTitle || 'Unknown';
+}
+
+/** Extract description from og:description or flavor text, filtering mod IDs. */
+function extractDescription($: cheerio.CheerioAPI): string {
+  const ogDescription = $('meta[property="og:description"]').attr('content') ?? '';
+  const flavorText = $('.gemPopup .secDescrText, .item-popup--poe2 .secDescrText')
+    .first()
+    .text()
+    .trim();
+
+  const description = ogDescription || flavorText || '';
+  // Filter mod IDs (contain underscores without spaces)
+  if (description.includes('_') && !description.includes(' ')) {
+    return '';
+  }
+  return description;
+}
+
+/** Check if text looks like an internal mod ID (e.g., "damage_+%"). */
+function isModId(text: string): boolean {
+  return text.includes('_') && !text.includes(' ');
+}
+
+/** Extract gem/item stats from popup elements (.gemPopup or .item-popup--poe2). */
+function extractStats($: cheerio.CheerioAPI): string {
+  const stats: string[] = [];
+
+  // Try .gemPopup first, fall back to .item-popup--poe2
+  let popup = $('.gemPopup').first();
+  if (popup.find('.property, .explicitMod').length === 0) {
+    popup = $('.item-popup--poe2').first();
+  }
+
+  popup.find('.property, .explicitMod, .implicitMod').each((_, el) => {
+    const text = $(el).text().trim();
+    if (text && !text.includes('Edit') && text.length < 200 && !isModId(text)) {
+      stats.push(text);
+    }
+  });
+
+  return stats.join('\n');
+}
+
+/** Parse HTML table rows into tab-separated content. */
+function parseTableRows($: cheerio.CheerioAPI, table: cheerio.Cheerio<Element>): string {
+  const rows: string[] = [];
+
+  table.find('tr').each((_, tr) => {
+    const cells: string[] = [];
+    $(tr)
+      .find('td, th')
+      .each((_, cell) => {
+        const $cell = $(cell);
+        const anchors = $cell.find('a');
+        if (anchors.length > 1) {
+          const anchorTexts: string[] = [];
+          anchors.each((_, a) => {
+            const text = $(a).text().trim();
+            if (text) anchorTexts.push(text);
+          });
+          cells.push(anchorTexts.join(', '));
+        } else {
+          const cellText = $cell.text().trim();
+          if (cellText) cells.push(cellText);
+        }
+      });
+    if (cells.length > 0) {
+      rows.push(cells.join('\t'));
+    }
+  });
+
+  return rows.join('\n');
+}
+
+/** Parse "Supported By" section with gem names and tags in "Gem (tags)" format. */
+function parseSupportedByRow($: cheerio.CheerioAPI, row: cheerio.Cheerio<Element>): string {
+  const gemEntries: string[] = [];
+
+  row.find('.col').each((_, col) => {
+    const anchors = $(col).find('a');
+    let gemName = '';
+    const tags: string[] = [];
+
+    anchors.each((_, a) => {
+      const text = $(a).text().trim();
+      if (!text || text.length < 2 || text.includes('Reset')) return;
+
+      if (!gemName) {
+        gemName = text;
+      } else {
+        tags.push(text);
+      }
+    });
+
+    if (gemName) {
+      gemEntries.push(tags.length > 0 ? `${gemName} (${tags.join(', ')})` : gemName);
+    }
+  });
+
+  return gemEntries.join(' | ');
+}
+
+/** Extract content from siblings of a card-header element. */
+function extractSectionContent(
+  $: cheerio.CheerioAPI,
+  headerEl: cheerio.Cheerio<Element>,
+  isSupportsSection: boolean,
+): string {
+  let current = headerEl.next();
+  let attempts = 0;
+
+  while (current.length && attempts < 5) {
+    if (current.hasClass('card-body') && !isSupportsSection) {
+      return current.text().trim();
+    }
+
+    if (current.hasClass('row') && isSupportsSection) {
+      const content = parseSupportedByRow($, current);
+      if (content) return content;
+    }
+
+    if (current.hasClass('table-responsive')) {
+      return parseTableRows($, current);
+    }
+
+    if (current.is('table')) {
+      return parseTableRows($, current);
+    }
+
+    if (current.hasClass('card-header')) {
+      break;
+    }
+
+    current = current.next();
+    attempts++;
+  }
+
+  // Fallback: try card-body within parent
+  return headerEl.parent().find('.card-body').first().text().trim();
 }
 
 /**
@@ -326,50 +523,16 @@ function truncateEntries(content: string, maxEntries: number): string {
 export function parsePoe2dbHtml(html: string): Poe2dbParsedPage {
   const $ = cheerio.load(html);
 
-  // Remove noise elements
-  $('script, style, nav, footer, header, noscript, .ad-container, #consent-box').remove();
+  cleanHtmlNoise($);
 
-  // Extract title from og:title meta tag or h1
-  const ogTitle = $('meta[property="og:title"]').attr('content');
-  const h1Title = $('h1').first().text().trim();
-  const pageTitle = $('title').text().split('-')[0]?.trim();
-  const title = ogTitle ?? (h1Title || pageTitle || 'Unknown');
-
-  // Extract main description from og:description meta tag (most reliable)
-  const ogDescription = $('meta[property="og:description"]').attr('content') ?? '';
-
-  // Also try to get description from first gemPopup or item-popup
-  const gemPopupDesc = $('.gemPopup .explicitMod, .item-popup--poe2 .explicitMod')
-    .first()
-    .text()
-    .trim();
-
-  const description = ogDescription || gemPopupDesc || '';
-
-  // Initialize sections map
+  const title = extractTitle($);
+  const description = extractDescription($);
   const sections = new Map<string, Poe2dbSection>();
-  let stats = '';
-
-  // Extract gem/item stats from the first popup
-  const gemStats: string[] = [];
-  $('.gemPopup, .item-popup--poe2')
-    .first()
-    .find('.property, .explicitMod, .implicitMod')
-    .each((_, el) => {
-      const text = $(el).text().trim();
-      if (text && !text.includes('Edit') && text.length < 200) {
-        gemStats.push(text);
-      }
-    });
-  if (gemStats.length > 0) {
-    stats = gemStats.join('\n');
-  }
+  let stats = extractStats($);
 
   // Parse each card-header section
   $('.card-header').each((_, el) => {
     const headerText = $(el).text().trim();
-
-    // Skip empty headers or noise
     if (!headerText || headerText.length < 2) return;
 
     // Parse section name and item count from "Name /N" format
@@ -377,19 +540,9 @@ export function parsePoe2dbHtml(html: string): Poe2dbParsedPage {
     const rawName = match?.[1]?.trim() ?? headerText;
     const itemCount = match?.[2] ? parseInt(match[2], 10) : null;
 
-    // Get content from next sibling card-body or table
-    let content = '';
-    const nextSibling = $(el).next();
-    if (nextSibling.hasClass('card-body')) {
-      content = nextSibling.text().trim();
-    } else if (nextSibling.is('table') || nextSibling.hasClass('table-responsive')) {
-      content = nextSibling.text().trim();
-    } else {
-      // Try to get content from the card-body within parent
-      content = $(el).parent().find('.card-body').first().text().trim();
-    }
+    const isSupportsSection = rawName === 'Supported By';
+    const content = extractSectionContent($, $(el), isSupportsSection);
 
-    // Map to filter key
     const filterKey = mapSectionName(rawName);
     if (filterKey) {
       sections.set(filterKey, {
@@ -399,7 +552,7 @@ export function parsePoe2dbHtml(html: string): Poe2dbParsedPage {
         itemCount,
       });
 
-      // Also capture stats separately if from Attribute section
+      // Capture stats from Attribute section if no popup stats found
       if (filterKey === 'stats' && !stats) {
         stats = content;
       }
@@ -449,25 +602,27 @@ export function formatPoe2dbSections(
     }
   }
 
-  // Recommended supports (truncated to 5)
+  // Recommended supports (formatted as markdown table)
   if (filters.includes('supports')) {
     const section = page.sections.get('supports');
     if (section) {
-      const truncated = truncateEntries(section.content, 5);
-      output.push('### Recommended Support Gems', truncated, '');
+      const formatted = formatTableContent(section.content);
+      output.push('### Recommended Support Gems', formatted, '');
     }
   }
 
-  // Full supports list
+  // Full supports list (now in "Gem (tags) | Gem (tags)" format)
   if (filters.includes('supports_full')) {
     const section = page.sections.get('supports_full');
     if (section) {
-      const count = section.itemCount ?? 0;
+      const gems = section.content.split(' | ');
+      const count = gems.length;
       if (count > 50) {
+        const truncated = gems.slice(0, 50).join(' | ');
         output.push(
           `### Supported By (${count} gems)`,
           `⚠️ Large list (${count} entries). Showing first 50.`,
-          truncateEntries(section.content, 50),
+          truncated,
           '',
         );
       } else {
