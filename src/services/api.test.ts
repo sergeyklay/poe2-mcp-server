@@ -1198,6 +1198,228 @@ describe('parsePoe2dbHtml', () => {
 
     expect(result.sections.get('acquisition')?.content).toBe('Quest');
   });
+
+  it('falls back to page title when og:title and h1 are missing', () => {
+    const html = `<html><head><title>Fallback Title - poe2db</title></head><body></body></html>`;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.title).toBe('Fallback Title');
+  });
+
+  it('extracts description from secDescrText when og:description missing', () => {
+    const html = `
+      <html><body>
+        <div class="gemPopup">
+          <div class="secDescrText">Ancient flavor text</div>
+        </div>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.description).toBe('Ancient flavor text');
+  });
+
+  it('filters out mod IDs from description', () => {
+    const html = `
+      <html>
+        <head><meta property="og:description" content="damage_+%"></head>
+        <body></body>
+      </html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.description).toBe('');
+  });
+
+  it('falls back to item-popup--poe2 when gemPopup has no stats', () => {
+    const html = `
+      <html><body>
+        <div class="gemPopup"></div>
+        <div class="item-popup--poe2">
+          <span class="property">Armour: 500</span>
+          <span class="explicitMod">+50 to Life</span>
+        </div>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.stats).toContain('Armour: 500');
+    expect(result.stats).toContain('+50 to Life');
+  });
+
+  it('filters out mod IDs from stats', () => {
+    const html = `
+      <html><body>
+        <div class="gemPopup">
+          <span class="property">Level: 1</span>
+          <span class="explicitMod">damage_+%</span>
+          <span class="explicitMod">base_damage_taken_+%</span>
+        </div>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.stats).toContain('Level: 1');
+    expect(result.stats).not.toContain('damage_+%');
+    expect(result.stats).not.toContain('base_damage_taken_+%');
+  });
+
+  it('parses Supported By section with gem tags', () => {
+    const html = `
+      <html><body>
+        <div class="card-header">Supported By /3</div>
+        <div class="row">
+          <div class="col">
+            <a></a>
+            <a>GMP</a>
+            <a>Projectile</a>
+          </div>
+          <div class="col">
+            <a></a>
+            <a>Swift Affliction</a>
+            <a>Ailment</a>
+            <a>Duration</a>
+          </div>
+          <div class="col">
+            <a></a>
+            <a>Void Manipulation</a>
+          </div>
+        </div>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    const supportsFull = result.sections.get('supports_full');
+    expect(supportsFull).toBeDefined();
+    expect(supportsFull?.content).toContain('GMP (Projectile)');
+    expect(supportsFull?.content).toContain('Swift Affliction (Ailment, Duration)');
+    expect(supportsFull?.content).toContain('Void Manipulation');
+    expect(supportsFull?.content).toContain(' | ');
+  });
+
+  it('parses table-responsive section for level data', () => {
+    const html = `
+      <html><body>
+        <div class="card-header">Level Effect /3</div>
+        <div class="table-responsive">
+          <table>
+            <tr><th>Level</th><th>Damage</th></tr>
+            <tr><td>1</td><td>10</td></tr>
+            <tr><td>2</td><td>20</td></tr>
+          </table>
+        </div>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    const levels = result.sections.get('levels');
+    expect(levels).toBeDefined();
+    expect(levels?.content).toContain('Level\tDamage');
+    expect(levels?.content).toContain('1\t10');
+    expect(levels?.content).toContain('2\t20');
+  });
+
+  it('joins multiple anchor tags in table cells with comma', () => {
+    const html = `
+      <html><body>
+        <div class="card-header">Recommended Support Gems /2</div>
+        <div class="table-responsive">
+          <table>
+            <tr><th>Tier</th><th>Gems</th></tr>
+            <tr><td>1</td><td><a>GMP</a><a>Swift</a></td></tr>
+          </table>
+        </div>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    const supports = result.sections.get('supports');
+    expect(supports?.content).toContain('GMP, Swift');
+  });
+
+  it('parses direct table elements', () => {
+    const html = `
+      <html><body>
+        <div class="card-header">Level Effect /2</div>
+        <table>
+          <tr><th>Level</th><th>Effect</th></tr>
+          <tr><td>1</td><td>Boost</td></tr>
+        </table>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    const levels = result.sections.get('levels');
+    expect(levels).toBeDefined();
+    expect(levels?.content).toContain('1\tBoost');
+  });
+
+  it('uses fallback card-body within parent when sibling not found', () => {
+    const html = `
+      <html><body>
+        <div class="card">
+          <div class="card-header">From /1</div>
+          <div class="no-match">noise</div>
+          <div class="card-header">Next Section</div>
+          <div class="card-body">Parent Content</div>
+        </div>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    const acquisition = result.sections.get('acquisition');
+    expect(acquisition?.content).toBe('Parent Content');
+  });
+
+  it('returns Unknown title when no title sources available', () => {
+    const html = `<html><head></head><body></body></html>`;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.title).toBe('Unknown');
+  });
+
+  it('skips stats with Edit in text', () => {
+    const html = `
+      <html><body>
+        <div class="gemPopup">
+          <span class="property">Level: 1</span>
+          <span class="property">Edit</span>
+        </div>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.stats).toBe('Level: 1');
+    expect(result.stats).not.toContain('Edit');
+  });
+
+  it('skips stats longer than 200 characters', () => {
+    const longText = 'x'.repeat(250);
+    const html = `
+      <html><body>
+        <div class="gemPopup">
+          <span class="property">Level: 1</span>
+          <span class="explicitMod">${longText}</span>
+        </div>
+      </body></html>
+    `;
+
+    const result = parsePoe2dbHtml(html);
+
+    expect(result.stats).toBe('Level: 1');
+  });
 });
 
 describe('formatPoe2dbSections', () => {
@@ -1261,7 +1483,7 @@ describe('formatPoe2dbSections', () => {
     expect(result).not.toContain('### Recommended Support Gems');
   });
 
-  it('truncates supports section to 5 entries', () => {
+  it('shows all entries in supports section without truncation', () => {
     const supportsList =
       'GMP\nSwift Affliction\nControlled Destruction\nVoid Manipulation\nEfficacy\nArcane Surge\nSpell Echo';
     const sections = new Map([
@@ -1279,19 +1501,20 @@ describe('formatPoe2dbSections', () => {
 
     const result = formatPoe2dbSections(page, 'Test_Gem', 'us', ['supports']);
 
-    expect(result).toContain('... and 2 more');
-    expect(result).not.toContain('Spell Echo');
+    expect(result).toContain('GMP');
+    expect(result).toContain('Spell Echo');
   });
 
-  it('shows warning for large supports_full section', () => {
+  it('shows warning for large supports_full section with 50+ entries', () => {
+    const gems = Array.from({ length: 60 }, (_, i) => `Gem${i + 1}`);
     const sections = new Map([
       [
         'supports_full',
         {
           id: 'Supported By',
-          header: 'Supported By /187',
-          content: 'Gem1\nGem2\n...',
-          itemCount: 187,
+          header: 'Supported By /60',
+          content: gems.join(' | '),
+          itemCount: 60,
         },
       ],
     ]);
@@ -1299,13 +1522,14 @@ describe('formatPoe2dbSections', () => {
 
     const result = formatPoe2dbSections(page, 'Test_Gem', 'us', ['supports_full']);
 
-    expect(result).toContain('⚠️ Large list (187 entries)');
-    expect(result).toContain('Showing first 50');
+    expect(result).toContain('⚠️ Large list (60 entries). Showing first 50.');
+    expect(result).toContain('Gem1');
+    expect(result).toContain('Gem50');
+    expect(result).not.toContain('Gem51');
   });
 
   it('filters levels section by level_range', () => {
-    const levelsContent =
-      'Level 1: +5 damage\nLevel 2: +10 damage\nLevel 10: +50 damage\nLevel 11: +55 damage\nLevel 12: +60 damage';
+    const levelsContent = 'Level\tDamage\n5\t100\n6\t120\n10\t200\n11\t220\n12\t240';
     const sections = new Map([
       [
         'levels',
@@ -1317,11 +1541,11 @@ describe('formatPoe2dbSections', () => {
     const result = formatPoe2dbSections(page, 'Test_Gem', 'us', ['levels'], { min: 10, max: 12 });
 
     expect(result).toContain('### Levels 10-12');
-    expect(result).toContain('Level 10');
-    expect(result).toContain('Level 11');
-    expect(result).toContain('Level 12');
-    expect(result).not.toContain('Level 1:');
-    expect(result).not.toContain('Level 2:');
+    expect(result).toContain('10\t200');
+    expect(result).toContain('11\t220');
+    expect(result).toContain('12\t240');
+    expect(result).not.toContain('5\t100');
+    expect(result).not.toContain('6\t120');
   });
 
   it('shows single level header when min equals max', () => {
