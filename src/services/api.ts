@@ -180,14 +180,14 @@ export async function getPoe2dbPage(term: string, lang: Poe2dbLang = 'us'): Prom
   const normalizedSlug = normalizeTrailingArabicToRoman(slug);
   const headers = { 'User-Agent': USER_AGENT, Accept: 'text/html' };
 
-  const res = await fetch(`https://poe2db.tw/${lang}/${normalizedSlug}`, {
+  const res = await fetch(`https://poe2db.tw/${lang}/${encodeURIComponent(normalizedSlug)}`, {
     headers,
   });
 
   if (res.ok) return res.text();
 
   if (res.status === 404 && normalizedSlug !== slug) {
-    const retry = await fetch(`https://poe2db.tw/${lang}/${slug}`, { headers });
+    const retry = await fetch(`https://poe2db.tw/${lang}/${encodeURIComponent(slug)}`, { headers });
     if (retry.ok) return retry.text();
   }
 
