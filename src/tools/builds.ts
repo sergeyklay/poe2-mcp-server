@@ -1,6 +1,10 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { getNinjaBuildIndex, type BuildLeagueEntry } from '../services/api.js';
+import {
+  getNinjaBuildIndex,
+  type BuildClassStatistic,
+  type BuildLeagueEntry,
+} from '../services/api.js';
 
 const DEFAULT_LEAGUE = 'Fate of the Vaal';
 
@@ -70,11 +74,11 @@ Examples:
 
         const { statistics, total } = entry;
 
-        // Build parallel index arrays, optionally filtered by class_name
-        let indices = statistics.class.map((_, i) => i);
+        // Filter by class_name if provided
+        let filteredStats: BuildClassStatistic[] = statistics;
         if (class_name) {
           const classQuery = class_name.toLowerCase();
-          indices = indices.filter((i) => statistics.class[i]!.toLowerCase().includes(classQuery));
+          filteredStats = statistics.filter((s) => s.class.toLowerCase().includes(classQuery));
         }
 
         const lines: string[] = [
@@ -85,16 +89,16 @@ Examples:
           '### Class Distribution',
         ];
 
-        if (indices.length === 0 && class_name) {
-          lines.push(
-            `No classes matching "${class_name}". Available classes: ${statistics.class.join(', ')}`,
-          );
+        if (filteredStats.length === 0 && class_name) {
+          const availableClasses = statistics.map((s) => s.class).join(', ');
+          lines.push(`No classes matching "${class_name}". Available classes: ${availableClasses}`);
+        } else if (filteredStats.length === 0) {
+          lines.push('*No class statistics available for this league.*');
         } else {
-          for (const i of indices) {
-            const className = statistics.class[i]!;
-            const pct = statistics.percentage[i] ?? 0;
-            const trend = statistics.trend[i] ?? 0;
-            lines.push(`- **${className}**: ${pct}%${trendLabel(trend)}`);
+          for (const stat of filteredStats) {
+            lines.push(
+              `- **${stat.class}**: ${stat.percentage.toFixed(1)}%${trendLabel(stat.trend)}`,
+            );
           }
         }
 

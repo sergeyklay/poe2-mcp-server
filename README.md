@@ -6,17 +6,20 @@ All data is sourced from **public APIs only**. No API keys, no GGG OAuth registr
 
 ## Tools
 
-| Tool                   | Description                                           | Source                                    |
-| ---------------------- | ----------------------------------------------------- | ----------------------------------------- |
-| `poe2_currency_prices` | Current exchange rates for all currencies             | [poe.ninja](https://poe.ninja/poe2)       |
-| `poe2_currency_check`  | Look up a specific currency by name                   | [poe.ninja](https://poe.ninja/poe2)       |
-| `poe2_item_price`      | Price check items across exchange categories          | [poe.ninja](https://poe.ninja/poe2)       |
-| `poe2_exchange_top`    | Most valuable items by exchange category              | [poe.ninja](https://poe.ninja/poe2)       |
-| `poe2_wiki_search`     | Search the PoE 2 community wiki                       | [poe2wiki.net](https://www.poe2wiki.net/) |
-| `poe2_wiki_page`       | Retrieve full wiki article content                    | [poe2wiki.net](https://www.poe2wiki.net/) |
-| `poe2_db_lookup`       | Datamined game data: gems, mods, items, translations  | [poe2db.tw](https://poe2db.tw/)           |
-| `poe2_meta_builds`     | Ladder class distribution with percentages and trends | [poe.ninja](https://poe.ninja/poe2)       |
-| `poe2_log_summary`     | Parse local game logs: zones, sessions, player events | Local logs                                |
+| Tool                    | Description                                           | Source                                    |
+| ----------------------- | ----------------------------------------------------- | ----------------------------------------- |
+| `poe2_currency_prices`  | Current exchange rates for all currencies             | [poe.ninja](https://poe.ninja/poe2)       |
+| `poe2_currency_check`   | Look up a specific currency by name                   | [poe.ninja](https://poe.ninja/poe2)       |
+| `poe2_item_price`       | Price check items across exchange categories          | [poe.ninja](https://poe.ninja/poe2)       |
+| `poe2_exchange_top`     | Most valuable items by exchange category              | [poe.ninja](https://poe.ninja/poe2)       |
+| `poe2_wiki_search`      | Search the PoE 2 community wiki                       | [poe2wiki.net](https://www.poe2wiki.net/) |
+| `poe2_wiki_page`        | Retrieve full wiki article content                    | [poe2wiki.net](https://www.poe2wiki.net/) |
+| `poe2_db_lookup`        | Datamined game data: gems, mods, items, translations  | [poe2db.tw](https://poe2db.tw/)           |
+| `poe2_meta_builds`      | Ladder class distribution with percentages and trends | [poe.ninja](https://poe.ninja/poe2)       |
+| `poe2_log_summary`      | Parse local game logs: zones, sessions, player events | Local logs                                |
+| `poe2_pob_decode`       | Decode PoB codes, pobb.in links, or local build files | [pobb.in](https://pobb.in/) / local       |
+| `poe2_pob_local_builds` | List saved PoB2 builds from local filesystem          | Local PoB2                                |
+| `poe2_pob_compare`      | Compare two builds to identify gear/skill differences | Local / remote                            |
 
 ## Requirements
 
@@ -71,7 +74,7 @@ Restart Claude Desktop after editing the config.
 
 #### Custom Game Installation Path
 
-If PoE2 is installed in a non-standard location (e.g., a different drive), add the `--poe2-path` argument. This enables the `poe2_log_summary` tool to find your game logs:
+If PoE2 is installed in a non-standard location (e.g., a different drive), add the `--poe2-path` argument:
 
 ```json
 {
@@ -88,7 +91,17 @@ If PoE2 is installed in a non-standard location (e.g., a different drive), add t
 }
 ```
 
-Replace `D:\\Games\\Path of Exile 2` with your actual installation directory.
+#### Custom Path of Building Directory
+
+To specify a custom PoB2 builds directory (for `poe2_pob_*` tools), add `--pob2-path`:
+
+```json
+"args": [
+  "C:\\path\\to\\poe2-mcp-server\\dist\\index.js",
+  "--pob2-path",
+  "D:\\PoB\\Builds"
+]
+```
 
 ### Claude Code
 
@@ -117,6 +130,8 @@ Once connected, try asking:
 - _"Show me my play session history"_
 - _"Which classes are most popular on the ladder this league?"_
 - _"Look up Essence Drain on poe2db"_
+- _"Decode this build: pobb.in/abc123"_
+- _"Compare my local build to this guide"_
 - _"What's the French name for Chaos Bolt?"_ → uses `poe2_db_lookup` with `lang="fr"`
 
 ### Example Conversation

@@ -40,11 +40,10 @@ describe('poe2_meta_builds', () => {
           leagueUrl: 'vaal',
           total: 124295,
           status: 1,
-          statistics: {
-            class: ['Blood Mage', 'Oracle'],
-            percentage: [17.9, 16.8],
-            trend: [1, -1],
-          },
+          statistics: [
+            { class: 'Blood Mage', percentage: 17.9, trend: 1 },
+            { class: 'Oracle', percentage: 16.8, trend: -1 },
+          ],
         },
       ],
     });
@@ -68,7 +67,7 @@ describe('poe2_meta_builds', () => {
           leagueUrl: 'vaal',
           total: 100,
           status: 1,
-          statistics: { class: [], percentage: [], trend: [] },
+          statistics: [],
         },
       ],
     });
@@ -87,11 +86,10 @@ describe('poe2_meta_builds', () => {
           leagueUrl: 'vaal',
           total: 100,
           status: 1,
-          statistics: {
-            class: ['Witch', 'Warrior'],
-            percentage: [20, 15],
-            trend: [1, 0],
-          },
+          statistics: [
+            { class: 'Witch', percentage: 20, trend: 1 },
+            { class: 'Warrior', percentage: 15, trend: 0 },
+          ],
         },
       ],
     });
@@ -102,7 +100,7 @@ describe('poe2_meta_builds', () => {
     });
     const text = result.content[0]!.text;
 
-    expect(text).toContain('**Witch**: 20%');
+    expect(text).toContain('**Witch**: 20.0%');
     expect(text).not.toContain('Warrior');
   });
 
