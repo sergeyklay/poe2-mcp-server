@@ -318,7 +318,8 @@ poe2-mcp-server/
 │       ├── items.ts          # Exchange item price tools
 │       ├── wiki.ts           # Wiki search & poe2db lookup
 │       ├── builds.ts         # Meta build overview
-│       └── logfile.ts        # Local logs parser
+│       ├── logfile.ts        # Local logs parser
+│       └── pob.ts            # Path of Building integration
 ├── dist/                     # Compiled output (npm run build)
 ├── package.json
 ├── tsconfig.json
@@ -333,7 +334,9 @@ poe2-mcp-server/
 | [poe.ninja](https://poe.ninja/poe2) PoE2 Build Index API | None | ~12 req / 5 min    | ~1 hour          |
 | [poe2wiki.net](https://www.poe2wiki.net/) MediaWiki API  | None | Standard MW limits | Community-driven |
 | [poe2db.tw](https://poe2db.tw/)                          | None | Reasonable use     | Each patch       |
+| [pobb.in](https://pobb.in/) PoB paste service            | None | ~10 req / min      | On-demand        |
 | Local `Client.txt` / `LatestClient.txt`                  | None | N/A (local file)   | Real-time        |
+| Local PoB2 Builds directory                              | None | N/A (local file)   | Real-time        |
 
 A built-in rate limiter ensures poe.ninja limits are respected automatically.
 
