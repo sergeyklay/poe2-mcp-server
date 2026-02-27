@@ -22,6 +22,7 @@ import {
   FLASK_CHARGES_PATTERN,
   CHARM_DURATION_PATTERN,
   CHARM_LIMIT_PATTERN,
+  CHARM_CHARGES_PATTERN,
   AREA_LEVEL_PATTERN,
   USAGE_INSTRUCTION_PATTERN,
   ITEM_TYPE_IDENTIFIERS,
@@ -32,10 +33,24 @@ import {
   GEM_TAGS_PATTERN,
   GEM_CRIT_CHANCE_PATTERN,
   GEM_EFFECTIVENESS_PATTERN,
+  GEM_RESERVATION_PATTERN,
+  GEM_EXPERIENCE_PATTERN,
   MODIFIER_HEADER_PATTERN,
   LIMIT_PATTERN,
   TIER_PATTERN,
   SOCKETABLE_EFFECT_PATTERN,
+  ITEM_CLASS_PATTERN,
+  ITEM_LEVEL_PATTERN,
+  RUNE_SECTION_HEADER_PATTERN,
+  MAP_TIER_PATTERN,
+  MAP_ITEM_QUANTITY_PATTERN,
+  MAP_ITEM_RARITY_PATTERN,
+  MAP_PACK_SIZE_PATTERN,
+  MOD_MARKERS,
+  AUGMENTED_MARKER,
+  UNMET_MARKER,
+  CRIT_CHANCE_STAT_PATTERN,
+  ATTACK_SPEED_STAT_PATTERN,
   type ClientStrings,
   type SupportedLanguage,
 } from '../services/poe2-client-strings.js';
@@ -109,12 +124,17 @@ interface GemInfo {
   castTime: number | null;
   critChance: number | null;
   effectiveness: number | null;
+  reservation: number | null;
+  experience: string | null;
 }
 
 /** Map/Waystone properties. */
 interface MapProperties {
   areaLevel: number | null;
   tier: number | null;
+  itemQuantity: string | null;
+  itemRarity: string | null;
+  packSize: string | null;
 }
 
 /** Parsed item structure. */
@@ -137,6 +157,8 @@ interface ParsedItem {
   socketableEffects: string[];
   /** Gem info (for skill/support gems) */
   gemInfo: GemInfo | null;
+  /** Gem description lines (skill effect text) */
+  gemDescription: string[];
   /** Flask base properties (recovery, charges) */
   flaskProperties: string[];
   /** Charm base properties (duration, limit) */
@@ -168,22 +190,6 @@ const ItemClipboardSchema = z.object({
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
-
-/** English mod type markers (language-independent in PoE2). */
-const MOD_MARKERS = {
-  implicit: /\(implicit\)$/i,
-  rune: /\(rune\)$/i,
-  enchant: /\(enchant\)$/i,
-  crafted: /\(crafted\)$/i,
-  fractured: /\(fractured\)$/i,
-  desecrated: /\(desecrated\)$/i,
-} as const;
-
-/** Augmented value marker. */
-const AUGMENTED_MARKER = /\(augmented\)/i;
-
-/** Unmet requirement marker. */
-const UNMET_MARKER = /\(unmet\)/i;
 
 /** Section delimiter in PoE2 item text. */
 const SECTION_DELIMITER = '--------';
@@ -273,6 +279,11 @@ function parseHeader(
 
     if (normalizedLine.startsWith(normalizedItemClass)) {
       itemClass = normalizedLine.slice(normalizedItemClass.length).trim();
+    } else if (ITEM_CLASS_PATTERN.test(normalizedLine)) {
+      const match = normalizedLine.match(ITEM_CLASS_PATTERN);
+      if (match) {
+        itemClass = normalizedLine.slice(match[0].length).trim();
+      }
     } else if (normalizedLine.startsWith(normalizedRarity)) {
       const rarityStr = normalizedLine.slice(normalizedRarity.length).trim();
       rarity = mapRarity(rarityStr, strings);
@@ -374,13 +385,24 @@ function parseStats(
       defenses.blockChance = parseNumericStat(line);
     } else if (line.startsWith(strings.PHYSICAL_DAMAGE)) {
       offense.physicalDamage = parseDamageRange(line);
-    } else if (line.startsWith(strings.CRIT_CHANCE)) {
+    } else if (line.startsWith(strings.CRIT_CHANCE) || CRIT_CHANCE_STAT_PATTERN.test(line)) {
       offense.critChance = parseNumericStat(line);
-    } else if (line.startsWith(strings.ATTACK_SPEED)) {
+    } else if (line.startsWith(strings.ATTACK_SPEED) || ATTACK_SPEED_STAT_PATTERN.test(line)) {
       offense.attacksPerSecond = parseNumericStat(line);
     } else if (RELOAD_TIME_PATTERN.test(line)) {
-      // Parse reload time for crossbows/bows
       offense.reloadTime = parseNumericStat(line);
+    } else {
+      const damageRange = parseDamageRange(line);
+      if (damageRange) {
+        const colonIdx = line.indexOf(':');
+        if (colonIdx !== -1) {
+          offense.elementalDamage.push({
+            min: damageRange.min,
+            max: damageRange.max,
+            type: line.slice(0, colonIdx).trim(),
+          });
+        }
+      }
     }
   }
 
@@ -531,6 +553,8 @@ function parseItemLevel(section: string[], strings: ClientStrings): number | nul
       const match = line.match(/(\d+)/);
       if (match) return parseInt(match[1]!, 10);
     }
+    const patternMatch = line.match(ITEM_LEVEL_PATTERN);
+    if (patternMatch) return parseInt(patternMatch[1]!, 10);
   }
   return null;
 }
@@ -621,6 +645,7 @@ function parseItemClipboard(text: string): ParsedItem {
     runeEffects: [],
     socketableEffects: [],
     gemInfo: null,
+    gemDescription: [],
     flaskProperties: [],
     charmProperties: [],
     mapProperties: null,
@@ -646,7 +671,10 @@ function parseItemClipboard(text: string): ParsedItem {
     const section = sections[i]!;
 
     // Item level
-    if (sectionContains(section, strings.ITEM_LEVEL)) {
+    if (
+      sectionContains(section, strings.ITEM_LEVEL) ||
+      section.some((line) => ITEM_LEVEL_PATTERN.test(line))
+    ) {
       item.itemLevel = parseItemLevel(section, strings);
     }
 
@@ -695,7 +723,9 @@ function parseItemClipboard(text: string): ParsedItem {
           (line) =>
             ENERGY_SHIELD_PATTERN.test(line) ||
             RELOAD_TIME_PATTERN.test(line) ||
-            BLOCK_CHANCE_PATTERN.test(line),
+            BLOCK_CHANCE_PATTERN.test(line) ||
+            CRIT_CHANCE_STAT_PATTERN.test(line) ||
+            ATTACK_SPEED_STAT_PATTERN.test(line),
         ));
     if (hasStatsKeywords) {
       const stats = parseStats(section, strings);
@@ -711,6 +741,9 @@ function parseItemClipboard(text: string): ParsedItem {
       }
       if (stats.offense.reloadTime) {
         item.offense.reloadTime = stats.offense.reloadTime;
+      }
+      if (stats.offense.elementalDamage.length > 0) {
+        item.offense.elementalDamage.push(...stats.offense.elementalDamage);
       }
     }
 
@@ -759,11 +792,18 @@ function parseItemClipboard(text: string): ParsedItem {
       item.itemClass.includes('魔符') ||
       item.itemClass.includes('護符');
     const hasCharmProps = section.some(
-      (line) => CHARM_DURATION_PATTERN.test(line) || CHARM_LIMIT_PATTERN.test(line),
+      (line) =>
+        CHARM_DURATION_PATTERN.test(line) ||
+        CHARM_LIMIT_PATTERN.test(line) ||
+        CHARM_CHARGES_PATTERN.test(line),
     );
     if (isCharmItem && hasCharmProps) {
       for (const line of section) {
-        if (CHARM_DURATION_PATTERN.test(line) || CHARM_LIMIT_PATTERN.test(line)) {
+        if (
+          CHARM_DURATION_PATTERN.test(line) ||
+          CHARM_LIMIT_PATTERN.test(line) ||
+          CHARM_CHARGES_PATTERN.test(line)
+        ) {
           item.charmProperties.push(line);
         }
       }
@@ -778,7 +818,7 @@ function parseItemClipboard(text: string): ParsedItem {
       }
     }
 
-    // Map/Logbook detection for Area Level
+    // Map/Logbook detection for Area Level and map properties
     const isMapItem =
       item.itemClass.toLowerCase().includes('waystone') ||
       item.itemClass.toLowerCase().includes('map') ||
@@ -787,18 +827,53 @@ function parseItemClipboard(text: string): ParsedItem {
       item.itemClass.includes('地图') ||
       item.itemClass.includes('航海日誌') ||
       item.itemClass.includes('航海日志');
+
     const areaLevelMatch = section.find((line) => AREA_LEVEL_PATTERN.test(line));
-    if (isMapItem && areaLevelMatch) {
-      const match = areaLevelMatch.match(AREA_LEVEL_PATTERN);
-      if (match) {
+    const hasMapStats = section.some(
+      (line) =>
+        MAP_TIER_PATTERN.test(line) ||
+        MAP_ITEM_QUANTITY_PATTERN.test(line) ||
+        MAP_ITEM_RARITY_PATTERN.test(line) ||
+        MAP_PACK_SIZE_PATTERN.test(line),
+    );
+
+    if (isMapItem && (areaLevelMatch || hasMapStats)) {
+      if (!item.mapProperties) {
         item.mapProperties = {
-          areaLevel: parseInt(match[1]!, 10),
+          areaLevel: null,
           tier: null,
+          itemQuantity: null,
+          itemRarity: null,
+          packSize: null,
         };
-        // Extract tier from base type if present: "Waystone (Tier 5)"
-        const tierMatch = item.baseType.match(/\(Tier\s*(\d+)\)/i);
-        if (tierMatch) {
-          item.mapProperties.tier = parseInt(tierMatch[1]!, 10);
+      }
+
+      if (areaLevelMatch) {
+        const match = areaLevelMatch.match(AREA_LEVEL_PATTERN);
+        if (match) {
+          item.mapProperties.areaLevel = parseInt(match[1]!, 10);
+        }
+      }
+
+      for (const line of section) {
+        const tierMatch = line.match(MAP_TIER_PATTERN);
+        if (tierMatch) item.mapProperties.tier = parseInt(tierMatch[1]!, 10);
+
+        const quantityMatch = line.match(MAP_ITEM_QUANTITY_PATTERN);
+        if (quantityMatch) item.mapProperties.itemQuantity = `${quantityMatch[1]}%`;
+
+        const rarityMatch = line.match(MAP_ITEM_RARITY_PATTERN);
+        if (rarityMatch) item.mapProperties.itemRarity = `${rarityMatch[1]}%`;
+
+        const packSizeMatch = line.match(MAP_PACK_SIZE_PATTERN);
+        if (packSizeMatch) item.mapProperties.packSize = `${packSizeMatch[1]}%`;
+      }
+
+      // Also extract tier from base type if present: "Waystone (Tier 5)"
+      if (item.mapProperties.tier === null) {
+        const baseTierMatch = item.baseType.match(/\(Tier\s*(\d+)\)/i);
+        if (baseTierMatch) {
+          item.mapProperties.tier = parseInt(baseTierMatch[1]!, 10);
         }
       }
     }
@@ -816,8 +891,10 @@ function parseItemClipboard(text: string): ParsedItem {
         GEM_CAST_TIME_PATTERN.test(line) ||
         GEM_TAGS_PATTERN.test(line) ||
         GEM_CRIT_CHANCE_PATTERN.test(line) ||
-        GEM_EFFECTIVENESS_PATTERN.test(line),
+        GEM_EFFECTIVENESS_PATTERN.test(line) ||
+        GEM_RESERVATION_PATTERN.test(line),
     );
+    const hasGemExperience = isGemItem && section.some((line) => GEM_EXPERIENCE_PATTERN.test(line));
     if (isGemItem && hasGemMetadata && !item.gemInfo) {
       const gemInfo: GemInfo = {
         tags: [],
@@ -827,6 +904,8 @@ function parseItemClipboard(text: string): ParsedItem {
         castTime: null,
         critChance: null,
         effectiveness: null,
+        reservation: null,
+        experience: null,
       };
 
       for (const line of section) {
@@ -864,13 +943,45 @@ function parseItemClipboard(text: string): ParsedItem {
         if (effectivenessMatch) {
           gemInfo.effectiveness = parseFloat(effectivenessMatch[1]!);
         }
+        // Reservation (Spirit Gems)
+        const reservationMatch = line.match(GEM_RESERVATION_PATTERN);
+        if (reservationMatch) {
+          gemInfo.reservation = parseInt(reservationMatch[1]!, 10);
+        }
+        // Experience
+        const experienceMatch = line.match(GEM_EXPERIENCE_PATTERN);
+        if (experienceMatch) {
+          gemInfo.experience = experienceMatch[1]!;
+        }
       }
 
       item.gemInfo = gemInfo;
     }
 
+    // Gem experience in a separate section (e.g., "Experience: 125000/250000")
+    if (isGemItem && hasGemExperience) {
+      for (const line of section) {
+        const experienceMatch = line.match(GEM_EXPERIENCE_PATTERN);
+        if (experienceMatch) {
+          if (!item.gemInfo) {
+            item.gemInfo = {
+              tags: [],
+              level: null,
+              manaCost: null,
+              manaMultiplier: null,
+              castTime: null,
+              critChance: null,
+              effectiveness: null,
+              reservation: null,
+              experience: null,
+            };
+          }
+          item.gemInfo.experience = experienceMatch[1]!;
+        }
+      }
+    }
+
     // Flavor text (quoted text in unique items)
-    // Supports: "...", «...», and unquoted flavor sections for Unique items
     const hasDoubleQuotes = section.some((line) => line.startsWith('"') && line.endsWith('"'));
     const hasGuillemets = section.some((line) => line.startsWith('«') || line.endsWith('»'));
     if (hasDoubleQuotes) {
@@ -880,6 +991,17 @@ function parseItemClipboard(text: string): ParsedItem {
         .join('\n');
     } else if (hasGuillemets) {
       item.flavorText = section.map((line) => line.replace(/^«|»$/g, '')).join('\n');
+    }
+
+    // Rune section with header (e.g., "Rune: Desert Rune (Level 1)\n+10% to Fire Resistance")
+    const isRuneSectionHeader = section.some((line) => RUNE_SECTION_HEADER_PATTERN.test(line));
+    if (isRuneSectionHeader) {
+      for (const line of section) {
+        if (RUNE_SECTION_HEADER_PATTERN.test(line)) continue;
+        if (line.trim()) {
+          item.mods.push({ text: line.trim(), type: 'rune' });
+        }
+      }
     }
 
     // Modifiers (lines with mod markers or plain explicit mods)
@@ -902,13 +1024,21 @@ function parseItemClipboard(text: string): ParsedItem {
           (line) =>
             ENERGY_SHIELD_PATTERN.test(line) ||
             RELOAD_TIME_PATTERN.test(line) ||
-            BLOCK_CHANCE_PATTERN.test(line),
+            BLOCK_CHANCE_PATTERN.test(line) ||
+            CRIT_CHANCE_STAT_PATTERN.test(line) ||
+            ATTACK_SPEED_STAT_PATTERN.test(line),
         ));
+
+    const isMapStatsSection = isMapItem && hasMapStats;
 
     // Check if this is a sockets section (handles variant spellings)
     const isSocketsSection =
       sectionContains(section, strings.SOCKETS) ||
       section.some((line) => SOCKETS_PATTERN.test(line));
+
+    const isItemLevelSection =
+      sectionContains(section, strings.ITEM_LEVEL) ||
+      section.some((line) => ITEM_LEVEL_PATTERN.test(line));
 
     const isRuneEffectsSection = hasRuneEffects;
     const isSocketableEffectsSection = isSocketableItem && hasSocketableEffects;
@@ -920,34 +1050,73 @@ function parseItemClipboard(text: string): ParsedItem {
       section.length === 1 && ITEM_TYPE_IDENTIFIERS.has(section[0]!.trim());
     const isLimitSection = section.length === 1 && LIMIT_PATTERN.test(section[0]!);
 
+    // For socketable items, a section with just "Level: N" is a base property
+    const isSocketableLevelSection =
+      isSocketableItem && !isGemItem && section.length === 1 && GEM_LEVEL_PATTERN.test(section[0]!);
+    if (isSocketableLevelSection) {
+      const levelMatch = section[0]!.match(GEM_LEVEL_PATTERN);
+      if (levelMatch && item.itemLevel === null) {
+        item.itemLevel = parseInt(levelMatch[1]!, 10);
+      }
+    }
+
+    // BUG-06: For gems, non-metadata text sections are descriptions
+    const isGemDescriptionSection =
+      isGemItem &&
+      !hasGemMetadata &&
+      !hasGemExperience &&
+      !isItemLevelSection &&
+      !sectionContains(section, strings.REQUIRES, strings.REQUIREMENTS_HEADER) &&
+      !sectionContains(section, strings.CORRUPTED, strings.UNIDENTIFIED, strings.MIRRORED) &&
+      section.length > 0 &&
+      section.every(
+        (line) =>
+          !Object.values(MOD_MARKERS).some((regex) => regex.test(line)) &&
+          !USAGE_INSTRUCTION_PATTERN.test(line),
+      );
+
+    if (isGemDescriptionSection && item.gemInfo) {
+      for (const line of section) {
+        if (!USAGE_INSTRUCTION_PATTERN.test(line) && line.trim()) {
+          item.gemDescription.push(line);
+        }
+      }
+    }
+
     const isModSection =
-      hasModMarkers ||
-      (section.length > 0 &&
-        !sectionContains(
-          section,
-          strings.ITEM_LEVEL,
-          strings.ITEM_CLASS,
-          strings.RARITY,
-          strings.SOCKETS,
-          strings.REQUIRES,
-          strings.REQUIREMENTS_HEADER,
-          strings.STACK_SIZE,
-          strings.CORRUPTED,
-          strings.UNIDENTIFIED,
-          strings.MIRRORED,
-        ) &&
-        !isStatsSection &&
-        !isSocketsSection &&
-        !isRuneEffectsSection &&
-        !isSocketableEffectsSection &&
-        !isFlaskPropsSection &&
-        !isCharmPropsSection &&
-        !isAreaLevelSection &&
-        !isGemInfoSection &&
-        !isSingleItemTypeSection &&
-        !isLimitSection &&
-        !section.some((line) => line.startsWith('"')) &&
-        !section.some((line) => line.startsWith('«')));
+      !isRuneSectionHeader &&
+      !isSocketableLevelSection &&
+      !isGemDescriptionSection &&
+      (hasModMarkers ||
+        (section.length > 0 &&
+          !sectionContains(
+            section,
+            strings.ITEM_LEVEL,
+            strings.ITEM_CLASS,
+            strings.RARITY,
+            strings.SOCKETS,
+            strings.REQUIRES,
+            strings.REQUIREMENTS_HEADER,
+            strings.STACK_SIZE,
+            strings.CORRUPTED,
+            strings.UNIDENTIFIED,
+            strings.MIRRORED,
+          ) &&
+          !isStatsSection &&
+          !isMapStatsSection &&
+          !isSocketsSection &&
+          !isItemLevelSection &&
+          !isRuneEffectsSection &&
+          !isSocketableEffectsSection &&
+          !isFlaskPropsSection &&
+          !isCharmPropsSection &&
+          !isAreaLevelSection &&
+          !isGemInfoSection &&
+          !hasGemExperience &&
+          !isSingleItemTypeSection &&
+          !isLimitSection &&
+          !section.some((line) => line.startsWith('"')) &&
+          !section.some((line) => line.startsWith('«'))));
 
     if (isModSection) {
       for (const line of section) {
@@ -958,58 +1127,13 @@ function parseItemClipboard(text: string): ParsedItem {
         if (MODIFIER_HEADER_PATTERN.test(line)) continue;
         if (LIMIT_PATTERN.test(line)) continue;
         if (TIER_PATTERN.test(line)) continue;
+        if (GEM_EXPERIENCE_PATTERN.test(line)) continue;
         if (isSocketableItem && SOCKETABLE_EFFECT_PATTERN.test(line)) continue;
 
         const mod = parseMod(line);
         if (mod.text) {
           item.mods.push(mod);
         }
-      }
-    }
-  }
-
-  // For Unique items, check if the last section before flags looks like flavour text
-  if (item.rarity === 'Unique' && !item.flavorText && sections.length > 2) {
-    // Find the last non-flag section
-    for (let i = sections.length - 1; i >= 1; i--) {
-      const section = sections[i]!;
-
-      // Skip flag sections
-      if (
-        sectionContains(section, strings.CORRUPTED, strings.UNIDENTIFIED, strings.MIRRORED, 'Split')
-      ) {
-        continue;
-      }
-
-      // Check if this section looks like flavour text (no stat-like patterns)
-      const looksLikeFlavourText =
-        section.length <= 3 &&
-        !section.some(
-          (line) =>
-            // Has numbers with % or +
-            /[+-]?\d+%/.test(line) ||
-            /^\+\d+/.test(line) ||
-            // Has stat keywords
-            /increased|reduced|more|less|adds? \d+/i.test(line) ||
-            // Has mod markers
-            Object.values(MOD_MARKERS).some((regex) => regex.test(line)) ||
-            // Is a granted skill line
-            GRANTED_SKILL_PATTERN.test(line),
-        ) &&
-        // Every line is mostly text (not starting with + or numbers)
-        section.every((line) => /^[A-Za-z"'«]/.test(line.trim()) || /^[^\d+-]/.test(line.trim()));
-
-      if (looksLikeFlavourText && section.length > 0) {
-        // Remove these lines from mods if they were added
-        const flavourLines = new Set(section.map((l) => l.trim()));
-        item.mods = item.mods.filter((mod) => !flavourLines.has(mod.text));
-        item.flavorText = section.join('\n');
-        break;
-      }
-
-      // If we hit a section with actual mods, stop looking
-      if (section.some((line) => Object.values(MOD_MARKERS).some((regex) => regex.test(line)))) {
-        break;
       }
     }
   }
@@ -1045,7 +1169,7 @@ function formatItemAsMarkdown(item: ParsedItem): string {
   // Header
   const displayName = item.name ?? item.baseType;
   lines.push(`## ${displayName}`);
-  if (item.name) {
+  if (item.name && item.baseType) {
     lines.push(`**${item.rarity} ${item.itemClass}** — ${item.baseType}`);
   } else {
     lines.push(`**${item.rarity} ${item.itemClass}**`);
@@ -1102,6 +1226,7 @@ function formatItemAsMarkdown(item: ParsedItem): string {
   // Offensive stats
   const hasOffense =
     item.offense.physicalDamage ||
+    item.offense.elementalDamage.length > 0 ||
     item.offense.critChance ||
     item.offense.attacksPerSecond ||
     item.offense.reloadTime;
@@ -1110,6 +1235,9 @@ function formatItemAsMarkdown(item: ParsedItem): string {
     if (item.offense.physicalDamage) {
       const pd = item.offense.physicalDamage;
       lines.push(`- **Physical Damage:** ${pd.min}-${pd.max}${pd.augmented ? ' (augmented)' : ''}`);
+    }
+    for (const ed of item.offense.elementalDamage) {
+      lines.push(`- **${ed.type}:** ${ed.min}-${ed.max}`);
     }
     if (item.offense.critChance) {
       lines.push(
@@ -1204,10 +1332,19 @@ function formatItemAsMarkdown(item: ParsedItem): string {
   if (item.mapProperties) {
     lines.push('### Map Properties');
     if (item.mapProperties.tier !== null) {
-      lines.push(`- **Tier:** ${item.mapProperties.tier}`);
+      lines.push(`- **Map Tier:** ${item.mapProperties.tier}`);
     }
     if (item.mapProperties.areaLevel !== null) {
       lines.push(`- **Area Level:** ${item.mapProperties.areaLevel}`);
+    }
+    if (item.mapProperties.itemQuantity) {
+      lines.push(`- **Item Quantity:** ${item.mapProperties.itemQuantity}`);
+    }
+    if (item.mapProperties.itemRarity) {
+      lines.push(`- **Item Rarity:** ${item.mapProperties.itemRarity}`);
+    }
+    if (item.mapProperties.packSize) {
+      lines.push(`- **Monster Pack Size:** ${item.mapProperties.packSize}`);
     }
     lines.push('');
   }
@@ -1234,6 +1371,21 @@ function formatItemAsMarkdown(item: ParsedItem): string {
     }
     if (item.gemInfo.effectiveness !== null) {
       lines.push(`- **Damage Effectiveness:** ${item.gemInfo.effectiveness}%`);
+    }
+    if (item.gemInfo.reservation !== null) {
+      lines.push(`- **Reservation:** ${item.gemInfo.reservation} Spirit`);
+    }
+    if (item.gemInfo.experience) {
+      lines.push(`- **Experience:** ${item.gemInfo.experience}`);
+    }
+    lines.push('');
+  }
+
+  // Gem Description
+  if (item.gemDescription.length > 0) {
+    lines.push('### Description');
+    for (const desc of item.gemDescription) {
+      lines.push(`- ${desc}`);
     }
     lines.push('');
   }
