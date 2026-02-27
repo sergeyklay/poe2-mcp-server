@@ -3,7 +3,9 @@ import { z } from 'zod';
 import {
   decodePobCode,
   extractPobbinId,
+  extractPoeNinjaId,
   fetchPobbinCode,
+  fetchPoeNinjaCode,
   parsePobXml,
   resolvePob2BuildsPath,
   listPob2Builds,
@@ -137,21 +139,27 @@ export function registerPobTools(server: McpServer, options?: PobToolOptions): v
     'poe2_pob_decode',
     {
       title: 'PoE2 Decode PoB Build',
-      description: `Decode a Path of Building 2 (PoB) build code and extract structured information.
+      description: `Decode a Path of Building 2 (PoB) build and extract structured information.
 
 Accepts:
-- Raw PoB export code (base64-encoded, URL-safe)
 - pobb.in URL (e.g., "https://pobb.in/abc123" or just "pobb.in/abc123")
+- poe.ninja PoB URL (e.g., "https://poe.ninja/poe2/pob/19f0c" or "pob2://poeninja/19f0c")
 - Local build filename (e.g., "MyBuild" or "MyBuild.xml")
+
+IMPORTANT: Do NOT paste raw Base64 PoB export codes — they get corrupted in transit (chat silently drops/alters characters in long strings). Instead, ask the user to upload the code to pobb.in or poe.ninja first, or use their local build filename.
 
 Returns: Class, level, skills with supports, equipped items with stats, and passive tree summary.
 
 Examples:
-- "Decode this build: eNrtVV1v2jAU..." → parses the PoB code
 - "What gems are in pobb.in/abc123?" → fetches and parses the paste
+- "Decode poe.ninja/poe2/pob/19f0c" → fetches from poe.ninja
 - "Show me my Witch build" → reads local build file`,
       inputSchema: {
-        code: z.string().describe('PoB code string, pobb.in URL, or local build filename'),
+        code: z
+          .string()
+          .describe(
+            'pobb.in URL, poe.ninja PoB URL, or local build filename (NOT raw base64 — it corrupts in transit)',
+          ),
       },
       annotations: {
         readOnlyHint: true,
@@ -164,30 +172,67 @@ Examples:
       try {
         const input = code.trim();
         let build: PobBuild;
-        let source = 'PoB code';
+        let source: string;
 
-        // Check if it's a pobb.in URL
+        // Check pobb.in URL
         const pobbinId = extractPobbinId(input);
         if (pobbinId) {
           source = `pobb.in/${pobbinId}`;
           const pobCode = await fetchPobbinCode(pobbinId);
           const xml = decodePobCode(pobCode);
           build = parsePobXml(xml, 'code');
-        } else if (pob2BuildsPath && input.length < 100 && !/[+/=]/.test(input)) {
-          // Check if it's a local build filename (short, no base64 characters)
-          const localBuild = readPob2Build(pob2BuildsPath, input);
-          if (localBuild) {
-            source = `local: ${input}`;
-            build = localBuild;
-          } else {
-            // Not a local file, try as PoB code
-            const xml = decodePobCode(input);
+        }
+        // Check poe.ninja PoB URL
+        else {
+          const ninjaId = extractPoeNinjaId(input);
+          if (ninjaId) {
+            source = `poe.ninja/poe2/pob/${ninjaId}`;
+            const pobCode = await fetchPoeNinjaCode(ninjaId);
+            const xml = decodePobCode(pobCode);
             build = parsePobXml(xml, 'code');
           }
-        } else {
-          // Decode as PoB code
-          const xml = decodePobCode(input);
-          build = parsePobXml(xml, 'code');
+          // Try as local build filename
+          else if (pob2BuildsPath) {
+            const localBuild = readPob2Build(pob2BuildsPath, input);
+            if (localBuild) {
+              source = `local: ${input}`;
+              build = localBuild;
+            } else {
+              return {
+                isError: true,
+                content: [
+                  {
+                    type: 'text',
+                    text:
+                      `No local build matching "${input}" found.\n\n` +
+                      `This tool accepts:\n` +
+                      `- **pobb.in URL** (e.g., "pobb.in/abc123")\n` +
+                      `- **poe.ninja PoB URL** (e.g., "poe.ninja/poe2/pob/19f0c")\n` +
+                      `- **Local build filename** (e.g., "MyBuild")\n\n` +
+                      `Raw Base64 PoB codes are NOT supported — they get corrupted in chat transit. ` +
+                      `Ask the user to upload their build to https://pobb.in or https://poe.ninja/poe2/pob and share the URL instead.`,
+                  },
+                ],
+              };
+            }
+          } else {
+            return {
+              isError: true,
+              content: [
+                {
+                  type: 'text',
+                  text:
+                    `Input "${input.slice(0, 60)}${input.length > 60 ? '...' : ''}" is not a recognized build URL.\n\n` +
+                    `This tool accepts:\n` +
+                    `- **pobb.in URL** (e.g., "pobb.in/abc123")\n` +
+                    `- **poe.ninja PoB URL** (e.g., "poe.ninja/poe2/pob/19f0c")\n` +
+                    `- **Local build filename** (requires PoB2 builds directory)\n\n` +
+                    `Raw Base64 PoB codes are NOT supported — they get corrupted in chat transit. ` +
+                    `Ask the user to upload their build to https://pobb.in or https://poe.ninja/poe2/pob and share the URL instead.`,
+                },
+              ],
+            };
+          }
         }
 
         // Format for display
@@ -203,7 +248,7 @@ Examples:
           content: [
             {
               type: 'text',
-              text: `Failed to decode PoB build: ${msg}\n\nEnsure the input is a valid PoB export string, pobb.in URL, or local build filename.`,
+              text: `Failed to decode PoB build: ${msg}`,
             },
           ],
         };
@@ -313,20 +358,24 @@ You can specify a custom path with the --pob2-path CLI flag when starting the se
       description: `Compare two Path of Building 2 builds to identify differences.
 
 Accepts any combination of:
-- PoB code (base64 encoded)
-- pobb.in URL
+- pobb.in URL (e.g., "pobb.in/abc123")
+- poe.ninja PoB URL (e.g., "poe.ninja/poe2/pob/19f0c")
 - Local build name (if local builds are available)
+
+IMPORTANT: Do NOT paste raw Base64 PoB export codes — they get corrupted in transit. Use URLs or local build names instead.
 
 Returns: Item-by-item comparison, passive tree differences, and skill/gem differences.
 
 Examples:
 - "Compare my build to pobb.in/abc123" → compare local build to guide
-- "What's different between these two builds?" → compare two PoB codes`,
+- "Compare MyBuild to poe.ninja/poe2/pob/19f0c" → compare local vs shared build`,
       inputSchema: {
-        current: z.string().describe('Current build: PoB code, pobb.in URL, or local build name'),
+        current: z
+          .string()
+          .describe('Current build: pobb.in URL, poe.ninja PoB URL, or local build name'),
         reference: z
           .string()
-          .describe('Reference build: PoB code, pobb.in URL, or local build name'),
+          .describe('Reference build: pobb.in URL, poe.ninja PoB URL, or local build name'),
       },
       annotations: {
         readOnlyHint: true,
@@ -341,7 +390,7 @@ Examples:
         const resolveBuild = async (input: string, label: string): Promise<PobBuild> => {
           const trimmed = input.trim();
 
-          // Check pobb.in URL first
+          // Check pobb.in URL
           const pobbinId = extractPobbinId(trimmed);
           if (pobbinId) {
             const code = await fetchPobbinCode(pobbinId);
@@ -349,22 +398,26 @@ Examples:
             return parsePobXml(xml, 'code');
           }
 
-          // Check if it's a local build name (short, no base64 characters)
-          if (pob2BuildsPath && trimmed.length < 100 && !/[+/=]/.test(trimmed)) {
+          // Check poe.ninja PoB URL
+          const ninjaId = extractPoeNinjaId(trimmed);
+          if (ninjaId) {
+            const code = await fetchPoeNinjaCode(ninjaId);
+            const xml = decodePobCode(code);
+            return parsePobXml(xml, 'code');
+          }
+
+          // Try as local build name
+          if (pob2BuildsPath) {
             const local = readPob2Build(pob2BuildsPath, trimmed);
             if (local) return local;
           }
 
-          // Try to decode as PoB code
-          try {
-            const xml = decodePobCode(trimmed);
-            return parsePobXml(xml, 'code');
-          } catch {
-            throw new Error(
-              `Could not resolve ${label}: "${trimmed.slice(0, 50)}...". ` +
-                `Not a valid PoB code, pobb.in URL, or local build name.`,
-            );
-          }
+          throw new Error(
+            `Could not resolve ${label}: "${trimmed.slice(0, 60)}${trimmed.length > 60 ? '...' : ''}". ` +
+              `Not a pobb.in URL, poe.ninja PoB URL, or local build name. ` +
+              `Raw Base64 PoB codes are not supported — they get corrupted in chat transit. ` +
+              `Ask the user to upload to https://pobb.in or https://poe.ninja/poe2/pob and share the URL.`,
+          );
         };
 
         const currentBuild = await resolveBuild(current, 'current build');
