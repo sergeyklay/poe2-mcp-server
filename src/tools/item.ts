@@ -51,6 +51,12 @@ import {
   UNMET_MARKER,
   CRIT_CHANCE_STAT_PATTERN,
   ATTACK_SPEED_STAT_PATTERN,
+  RARITY_ALTERNATES,
+  ITEM_CLASS_GEM_PATTERN,
+  ITEM_CLASS_FLASK_PATTERN,
+  ITEM_CLASS_CHARM_PATTERN,
+  ITEM_CLASS_MAP_PATTERN,
+  ITEM_CLASS_SOCKETABLE_PATTERN,
   type ClientStrings,
   type SupportedLanguage,
 } from '../services/poe2-client-strings.js';
@@ -179,6 +185,37 @@ interface ParsedItem {
   detectedLanguage: SupportedLanguage;
 }
 
+/** Result of a section parser attempting to process a section. */
+type SectionResult = 'consumed' | 'skipped' | 'not-applicable';
+
+/**
+ * Section parser — attempts to process one clipboard section.
+ *
+ * @param section - Array of lines from one section (between --------)
+ * @param item    - Mutable ParsedItem accumulator
+ * @param ctx     - Immutable parsing context (language strings, item class flags)
+ * @returns Result indicating whether the section was consumed
+ */
+type SectionParser = (section: string[], item: ParsedItem, ctx: ParseContext) => SectionResult;
+
+/** Pipeline entry — parser with optional greedy flag. */
+interface ParserEntry {
+  parse: SectionParser;
+  /** When true, parser tries all remaining sections and consumes all matches. */
+  greedy?: boolean;
+}
+
+/** Immutable context available to all section parsers, created once before pipeline runs. */
+interface ParseContext {
+  readonly strings: ClientStrings;
+  readonly language: SupportedLanguage;
+  readonly isGem: boolean;
+  readonly isFlask: boolean;
+  readonly isCharm: boolean;
+  readonly isMap: boolean;
+  readonly isSocketable: boolean;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod Schema
 // ─────────────────────────────────────────────────────────────────────────────
@@ -217,17 +254,6 @@ function splitSections(text: string): string[][] {
 
   return sections.filter((section) => section.length > 0);
 }
-
-/**
- * Alternate rarity values for languages with multiple forms (e.g., Spanish masculine/feminine).
- * Maps ItemRarity to array of alternate values to check.
- */
-const RARITY_ALTERNATES: Record<string, string[]> = {
-  // Spanish: Raro (masc) vs Rara (fem)
-  Rare: ['Rara', '레어', 'แรร์'],
-  Magic: ['Mágica', '매직'],
-  Unique: ['Única'],
-};
 
 /**
  * Map localized rarity string to ItemRarity.
@@ -613,6 +639,514 @@ function extractGrantedSkills(mods: ItemMod[]): string[] {
   return skills;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Section-Consumer Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Create immutable parsing context from header-derived item data.
+ * @param strings - Localized client strings.
+ * @param language - Detected language code.
+ * @param item - Item with header already parsed.
+ * @returns ParseContext for section parsers.
+ */
+function createParseContext(
+  strings: ClientStrings,
+  language: SupportedLanguage,
+  item: ParsedItem,
+): ParseContext {
+  return {
+    strings,
+    language,
+    isGem: ITEM_CLASS_GEM_PATTERN.test(item.itemClass) || item.rarity === 'Gem',
+    isFlask: ITEM_CLASS_FLASK_PATTERN.test(item.itemClass),
+    isCharm: ITEM_CLASS_CHARM_PATTERN.test(item.itemClass),
+    isMap: ITEM_CLASS_MAP_PATTERN.test(item.itemClass),
+    isSocketable: ITEM_CLASS_SOCKETABLE_PATTERN.test(item.itemClass),
+  };
+}
+
+/** Parse Item Level section. */
+const parseItemLevelSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (
+    !sectionContains(section, ctx.strings.ITEM_LEVEL) &&
+    !section.some((line) => ITEM_LEVEL_PATTERN.test(line))
+  ) {
+    return 'skipped';
+  }
+  item.itemLevel = parseItemLevel(section, ctx.strings);
+  return 'consumed';
+};
+
+/** Parse Sockets section. */
+const parseSocketsSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (
+    !sectionContains(section, ctx.strings.SOCKETS) &&
+    !section.some((line) => SOCKETS_PATTERN.test(line))
+  ) {
+    return 'skipped';
+  }
+  item.sockets = parseSockets(section, ctx.strings);
+  return 'consumed';
+};
+
+/** Parse Requirements section. */
+const parseRequirementsSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (!sectionContains(section, ctx.strings.REQUIRES, ctx.strings.REQUIREMENTS_HEADER)) {
+    return 'skipped';
+  }
+  item.requirements = parseRequirements(section, ctx.strings);
+  return 'consumed';
+};
+
+/** Parse Socketable effects (Weapons:, Armour:, etc.) for runes/soul cores. */
+const parseSocketableEffectsSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (!ctx.isSocketable) return 'not-applicable';
+  if (!section.some((line) => SOCKETABLE_EFFECT_PATTERN.test(line))) return 'skipped';
+  for (const line of section) {
+    if (SOCKETABLE_EFFECT_PATTERN.test(line)) {
+      item.socketableEffects.push(line);
+    }
+  }
+  return 'consumed';
+};
+
+/** Parse Stats section (quality, defenses, offense). Skipped for socketable items. */
+const parseStatsSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (ctx.isSocketable) return 'not-applicable';
+  const hasStatsKeywords =
+    sectionContains(
+      section,
+      ctx.strings.QUALITY,
+      ctx.strings.ARMOUR,
+      ctx.strings.EVASION,
+      ctx.strings.PHYSICAL_DAMAGE,
+      ctx.strings.CRIT_CHANCE,
+      ctx.strings.ATTACK_SPEED,
+    ) ||
+    section.some(
+      (line) =>
+        ENERGY_SHIELD_PATTERN.test(line) ||
+        RELOAD_TIME_PATTERN.test(line) ||
+        BLOCK_CHANCE_PATTERN.test(line) ||
+        CRIT_CHANCE_STAT_PATTERN.test(line) ||
+        ATTACK_SPEED_STAT_PATTERN.test(line),
+    );
+  if (!hasStatsKeywords) return 'skipped';
+
+  const stats = parseStats(section, ctx.strings);
+  if (stats.quality) item.quality = stats.quality;
+  if (stats.defenses.armour) item.defenses.armour = stats.defenses.armour;
+  if (stats.defenses.evasion) item.defenses.evasion = stats.defenses.evasion;
+  if (stats.defenses.energyShield) item.defenses.energyShield = stats.defenses.energyShield;
+  if (stats.defenses.blockChance) item.defenses.blockChance = stats.defenses.blockChance;
+  if (stats.offense.physicalDamage) item.offense.physicalDamage = stats.offense.physicalDamage;
+  if (stats.offense.critChance) item.offense.critChance = stats.offense.critChance;
+  if (stats.offense.attacksPerSecond) {
+    item.offense.attacksPerSecond = stats.offense.attacksPerSecond;
+  }
+  if (stats.offense.reloadTime) {
+    item.offense.reloadTime = stats.offense.reloadTime;
+  }
+  if (stats.offense.elementalDamage.length > 0) {
+    item.offense.elementalDamage.push(...stats.offense.elementalDamage);
+  }
+  return 'consumed';
+};
+
+/** Parse Stack size section (currency items). */
+const parseStackSizeSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (!sectionContains(section, ctx.strings.STACK_SIZE)) return 'skipped';
+  item.stack = parseStackSize(section, ctx.strings);
+  return 'consumed';
+};
+
+/** Parse Flags section (corrupted, unidentified, mirrored, split). */
+const parseFlagsSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (
+    !sectionContains(
+      section,
+      ctx.strings.CORRUPTED,
+      ctx.strings.UNIDENTIFIED,
+      ctx.strings.MIRRORED,
+      'Split',
+    )
+  ) {
+    return 'skipped';
+  }
+  const flags = parseFlags(section, ctx.strings);
+  if (flags.corrupted) item.flags.corrupted = true;
+  if (flags.unidentified) item.flags.unidentified = true;
+  if (flags.mirrored) item.flags.mirrored = true;
+  if (flags.split) item.flags.split = true;
+  return 'consumed';
+};
+
+/** Parse Rune Effects section (e.g., "Socketed in Weapon: ..."). */
+const parseRuneEffectsSection: SectionParser = (section, item): SectionResult => {
+  if (!section.some((line) => RUNE_EFFECT_PATTERN.test(line))) return 'skipped';
+  for (const line of section) {
+    if (RUNE_EFFECT_PATTERN.test(line)) {
+      item.runeEffects.push(line);
+    }
+  }
+  return 'consumed';
+};
+
+/** Parse Flask base properties (recovery, charges). */
+const parseFlaskPropertiesSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (!ctx.isFlask) return 'not-applicable';
+  if (
+    !section.some((line) => FLASK_RECOVERY_PATTERN.test(line) || FLASK_CHARGES_PATTERN.test(line))
+  ) {
+    return 'skipped';
+  }
+  for (const line of section) {
+    if (FLASK_RECOVERY_PATTERN.test(line) || FLASK_CHARGES_PATTERN.test(line)) {
+      item.flaskProperties.push(line);
+    }
+  }
+  return 'consumed';
+};
+
+/** Parse Charm base properties (duration, limit, charges). */
+const parseCharmPropertiesSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (!ctx.isCharm) return 'not-applicable';
+  if (
+    !section.some(
+      (line) =>
+        CHARM_DURATION_PATTERN.test(line) ||
+        CHARM_LIMIT_PATTERN.test(line) ||
+        CHARM_CHARGES_PATTERN.test(line),
+    )
+  ) {
+    return 'skipped';
+  }
+  for (const line of section) {
+    if (
+      CHARM_DURATION_PATTERN.test(line) ||
+      CHARM_LIMIT_PATTERN.test(line) ||
+      CHARM_CHARGES_PATTERN.test(line)
+    ) {
+      item.charmProperties.push(line);
+    }
+  }
+  return 'consumed';
+};
+
+/** Parse "Limited to: N" section for jewels. Only consumes single-line limit sections. */
+const parseLimitSection: SectionParser = (section, item): SectionResult => {
+  if (section.length !== 1) return 'skipped';
+  if (!LIMIT_PATTERN.test(section[0]!)) return 'skipped';
+  const match = section[0]!.match(LIMIT_PATTERN);
+  if (match) {
+    item.limit = parseInt(match[1]!, 10);
+  }
+  return 'consumed';
+};
+
+/** Parse Map/Waystone properties (area level, tier, quantity, rarity, pack size). Greedy. */
+const parseMapPropertiesSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (!ctx.isMap) return 'not-applicable';
+
+  const hasAreaLevel = section.some((line) => AREA_LEVEL_PATTERN.test(line));
+  const hasMapStats = section.some(
+    (line) =>
+      MAP_TIER_PATTERN.test(line) ||
+      MAP_ITEM_QUANTITY_PATTERN.test(line) ||
+      MAP_ITEM_RARITY_PATTERN.test(line) ||
+      MAP_PACK_SIZE_PATTERN.test(line),
+  );
+
+  if (!hasAreaLevel && !hasMapStats) return 'skipped';
+
+  if (!item.mapProperties) {
+    item.mapProperties = {
+      areaLevel: null,
+      tier: null,
+      itemQuantity: null,
+      itemRarity: null,
+      packSize: null,
+    };
+  }
+
+  for (const line of section) {
+    const areaMatch = line.match(AREA_LEVEL_PATTERN);
+    if (areaMatch) item.mapProperties.areaLevel = parseInt(areaMatch[1]!, 10);
+
+    const tierMatch = line.match(MAP_TIER_PATTERN);
+    if (tierMatch) item.mapProperties.tier = parseInt(tierMatch[1]!, 10);
+
+    const quantityMatch = line.match(MAP_ITEM_QUANTITY_PATTERN);
+    if (quantityMatch) item.mapProperties.itemQuantity = `${quantityMatch[1]}%`;
+
+    const rarityMatch = line.match(MAP_ITEM_RARITY_PATTERN);
+    if (rarityMatch) item.mapProperties.itemRarity = `${rarityMatch[1]}%`;
+
+    const packSizeMatch = line.match(MAP_PACK_SIZE_PATTERN);
+    if (packSizeMatch) item.mapProperties.packSize = `${packSizeMatch[1]}%`;
+  }
+
+  // Also extract tier from base type if present: "Waystone (Tier 5)"
+  if (item.mapProperties.tier === null) {
+    const baseTierMatch = item.baseType.match(/\(Tier\s*(\d+)\)/i);
+    if (baseTierMatch) {
+      item.mapProperties.tier = parseInt(baseTierMatch[1]!, 10);
+    }
+  }
+
+  return 'consumed';
+};
+
+/** Parse Gem metadata section (tags, level, mana cost, cast time, etc.). Greedy. */
+const parseGemInfoSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (!ctx.isGem) return 'not-applicable';
+
+  const hasGemMetadata = section.some(
+    (line) =>
+      GEM_LEVEL_PATTERN.test(line) ||
+      GEM_MANA_COST_PATTERN.test(line) ||
+      GEM_MANA_MULTIPLIER_PATTERN.test(line) ||
+      GEM_CAST_TIME_PATTERN.test(line) ||
+      GEM_TAGS_PATTERN.test(line) ||
+      GEM_CRIT_CHANCE_PATTERN.test(line) ||
+      GEM_EFFECTIVENESS_PATTERN.test(line) ||
+      GEM_RESERVATION_PATTERN.test(line),
+  );
+  if (!hasGemMetadata) return 'skipped';
+
+  // Already parsed — consume to remove from pool without overwriting
+  if (item.gemInfo) return 'consumed';
+
+  const gemInfo: GemInfo = {
+    tags: [],
+    level: null,
+    manaCost: null,
+    manaMultiplier: null,
+    castTime: null,
+    critChance: null,
+    effectiveness: null,
+    reservation: null,
+    experience: null,
+  };
+
+  for (const line of section) {
+    if (GEM_TAGS_PATTERN.test(line)) {
+      gemInfo.tags = line.split(',').map((t) => t.trim());
+    }
+    const levelMatch = line.match(GEM_LEVEL_PATTERN);
+    if (levelMatch) {
+      gemInfo.level = parseInt(levelMatch[1]!, 10);
+    }
+    const manaCostMatch = line.match(GEM_MANA_COST_PATTERN);
+    if (manaCostMatch) {
+      gemInfo.manaCost = parseInt(manaCostMatch[1]!, 10);
+    }
+    const manaMultMatch = line.match(GEM_MANA_MULTIPLIER_PATTERN);
+    if (manaMultMatch) {
+      gemInfo.manaMultiplier = parseInt(manaMultMatch[1]!, 10);
+    }
+    const castTimeMatch = line.match(GEM_CAST_TIME_PATTERN);
+    if (castTimeMatch) {
+      gemInfo.castTime = parseFloat(castTimeMatch[1]!);
+    }
+    const critMatch = line.match(GEM_CRIT_CHANCE_PATTERN);
+    if (critMatch) {
+      gemInfo.critChance = parseFloat(critMatch[1]!);
+    }
+    const effectivenessMatch = line.match(GEM_EFFECTIVENESS_PATTERN);
+    if (effectivenessMatch) {
+      gemInfo.effectiveness = parseFloat(effectivenessMatch[1]!);
+    }
+    const reservationMatch = line.match(GEM_RESERVATION_PATTERN);
+    if (reservationMatch) {
+      gemInfo.reservation = parseInt(reservationMatch[1]!, 10);
+    }
+    const experienceMatch = line.match(GEM_EXPERIENCE_PATTERN);
+    if (experienceMatch) {
+      gemInfo.experience = experienceMatch[1]!;
+    }
+  }
+
+  item.gemInfo = gemInfo;
+  return 'consumed';
+};
+
+/** Parse Gem experience section (e.g., "Experience: 125000/250000"). */
+const parseGemExperienceSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (!ctx.isGem) return 'not-applicable';
+  if (!section.some((line) => GEM_EXPERIENCE_PATTERN.test(line))) return 'skipped';
+
+  for (const line of section) {
+    const experienceMatch = line.match(GEM_EXPERIENCE_PATTERN);
+    if (experienceMatch) {
+      if (!item.gemInfo) {
+        item.gemInfo = {
+          tags: [],
+          level: null,
+          manaCost: null,
+          manaMultiplier: null,
+          castTime: null,
+          critChance: null,
+          effectiveness: null,
+          reservation: null,
+          experience: null,
+        };
+      }
+      item.gemInfo.experience = experienceMatch[1]!;
+    }
+  }
+  return 'consumed';
+};
+
+/** Parse Flavor text section (quoted text in unique items). */
+const parseFlavorTextSection: SectionParser = (section, item): SectionResult => {
+  const hasDoubleQuotes = section.some((line) => line.startsWith('"') && line.endsWith('"'));
+  const hasGuillemets = section.some((line) => line.startsWith('«') || line.endsWith('»'));
+
+  if (!hasDoubleQuotes && !hasGuillemets) return 'skipped';
+
+  if (hasDoubleQuotes) {
+    item.flavorText = section
+      .filter((line) => line.startsWith('"'))
+      .map((line) => line.replace(/^"|"$/g, ''))
+      .join('\n');
+  } else if (hasGuillemets) {
+    item.flavorText = section.map((line) => line.replace(/^«|»$/g, '')).join('\n');
+  }
+  return 'consumed';
+};
+
+/** Parse Rune section with header (e.g., "Rune: Desert Rune (Level 1)"). */
+const parseRuneSectionHeaderSection: SectionParser = (section, item): SectionResult => {
+  if (!section.some((line) => RUNE_SECTION_HEADER_PATTERN.test(line))) return 'skipped';
+  for (const line of section) {
+    if (RUNE_SECTION_HEADER_PATTERN.test(line)) continue;
+    if (line.trim()) {
+      item.mods.push({ text: line.trim(), type: 'rune' });
+    }
+  }
+  return 'consumed';
+};
+
+/** Parse socketable item Level as base property (single-line "Level: N"). */
+const parseSocketableLevelSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (!ctx.isSocketable || ctx.isGem) return 'not-applicable';
+  if (section.length !== 1) return 'skipped';
+  if (!GEM_LEVEL_PATTERN.test(section[0]!)) return 'skipped';
+
+  const levelMatch = section[0]!.match(GEM_LEVEL_PATTERN);
+  if (levelMatch && item.itemLevel === null) {
+    item.itemLevel = parseInt(levelMatch[1]!, 10);
+  }
+  return 'consumed';
+};
+
+/** Consume single-line item type identifier sections (e.g., "Focus", "Map"). */
+const parseSingleItemTypeSection: SectionParser = (section): SectionResult => {
+  if (section.length !== 1) return 'skipped';
+  if (!ITEM_TYPE_IDENTIFIERS.has(section[0]!.trim())) return 'skipped';
+  return 'consumed';
+};
+
+/** Parse Gem description sections (non-metadata text for gems). Greedy. */
+const parseGemDescriptionSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (!ctx.isGem) return 'not-applicable';
+  if (!item.gemInfo) return 'skipped';
+  if (section.length === 0) return 'skipped';
+
+  const isDescription = section.every(
+    (line) =>
+      !Object.values(MOD_MARKERS).some((regex) => regex.test(line)) &&
+      !USAGE_INSTRUCTION_PATTERN.test(line),
+  );
+  if (!isDescription) return 'skipped';
+
+  for (const line of section) {
+    if (!USAGE_INSTRUCTION_PATTERN.test(line) && line.trim()) {
+      item.gemDescription.push(line);
+    }
+  }
+  return 'consumed';
+};
+
+/** Parse Modifier sections — consumes all remaining sections. Greedy, must be last. */
+const parseModifiersSection: SectionParser = (section, item, ctx): SectionResult => {
+  for (const line of section) {
+    if (SOCKETED_RUNE_PATTERN.test(line)) continue;
+    if (USAGE_INSTRUCTION_PATTERN.test(line)) continue;
+    if (ITEM_TYPE_IDENTIFIERS.has(line.trim())) continue;
+    if (MODIFIER_HEADER_PATTERN.test(line)) continue;
+    if (LIMIT_PATTERN.test(line)) {
+      const match = line.match(LIMIT_PATTERN);
+      if (match && item.limit === null) {
+        item.limit = parseInt(match[1]!, 10);
+      }
+      continue;
+    }
+    if (TIER_PATTERN.test(line)) continue;
+    if (GEM_EXPERIENCE_PATTERN.test(line)) continue;
+    if (ctx.isSocketable && SOCKETABLE_EFFECT_PATTERN.test(line)) continue;
+
+    const mod = parseMod(line);
+    if (mod.text) {
+      item.mods.push(mod);
+    }
+  }
+  return 'consumed';
+};
+
+/** Ordered section parser pipeline. Order matters — modifiers must be last. */
+const SECTION_PARSERS: ParserEntry[] = [
+  { parse: parseItemLevelSection },
+  { parse: parseSocketsSection },
+  { parse: parseRequirementsSection },
+  { parse: parseSocketableEffectsSection },
+  { parse: parseStatsSection },
+  { parse: parseStackSizeSection },
+  { parse: parseFlagsSection },
+  { parse: parseRuneEffectsSection },
+  { parse: parseFlaskPropertiesSection },
+  { parse: parseCharmPropertiesSection },
+  { parse: parseLimitSection },
+  { parse: parseMapPropertiesSection, greedy: true },
+  { parse: parseGemInfoSection, greedy: true },
+  { parse: parseGemExperienceSection },
+  { parse: parseFlavorTextSection },
+  { parse: parseRuneSectionHeaderSection, greedy: true },
+  { parse: parseSocketableLevelSection },
+  { parse: parseSingleItemTypeSection },
+  { parse: parseGemDescriptionSection, greedy: true },
+  // Modifier parser MUST be last — consumes all remaining sections
+  { parse: parseModifiersSection, greedy: true },
+];
+
+/**
+ * Run section-consumer pipeline over remaining (non-header) sections.
+ * Each parser tries sections from the pool. Consumed sections are removed.
+ * Greedy parsers try all sections; non-greedy stop after first match.
+ */
+function runPipeline(sections: string[][], item: ParsedItem, ctx: ParseContext): void {
+  let pool = [...sections];
+
+  for (const { parse, greedy } of SECTION_PARSERS) {
+    if (greedy) {
+      pool = pool.filter((section) => parse(section, item, ctx) !== 'consumed');
+    } else {
+      for (let i = 0; i < pool.length; i++) {
+        const result = parse(pool[i]!, item, ctx);
+        if (result === 'consumed') {
+          pool.splice(i, 1);
+          break;
+        }
+        if (result === 'not-applicable') {
+          break;
+        }
+      }
+    }
+  }
+}
+
 /**
  * Main entry point: parse clipboard text to structured ParsedItem.
  * @param text - Raw clipboard text.
@@ -666,479 +1200,11 @@ function parseItemClipboard(text: string): ParsedItem {
     item.baseType = header.baseType;
   }
 
-  // Process remaining sections
-  for (let i = 1; i < sections.length; i++) {
-    const section = sections[i]!;
+  // Run section-consumer pipeline on remaining sections
+  const ctx = createParseContext(strings, detectedLanguage, item);
+  runPipeline(sections.slice(1), item, ctx);
 
-    // Item level
-    if (
-      sectionContains(section, strings.ITEM_LEVEL) ||
-      section.some((line) => ITEM_LEVEL_PATTERN.test(line))
-    ) {
-      item.itemLevel = parseItemLevel(section, strings);
-    }
-
-    // Sockets - check both keyword and pattern (Russian has variant spellings е/ё)
-    if (
-      sectionContains(section, strings.SOCKETS) ||
-      section.some((line) => SOCKETS_PATTERN.test(line))
-    ) {
-      item.sockets = parseSockets(section, strings);
-    }
-
-    // Requirements (both inline "Requires Level 35" and multi-line "Requirements:\nLevel: 35")
-    if (sectionContains(section, strings.REQUIRES, strings.REQUIREMENTS_HEADER)) {
-      item.requirements = parseRequirements(section, strings);
-    }
-
-    // Detect Socketable items (Runes, Soul Cores)
-    const isSocketableItem =
-      item.itemClass.toLowerCase().includes('socketable') ||
-      item.itemClass.includes('插槽物品') ||
-      item.itemClass.includes('鑲嵌物');
-
-    // Parse socketable effects (Weapons:, Armour:, etc.)
-    const hasSocketableEffects = section.some((line) => SOCKETABLE_EFFECT_PATTERN.test(line));
-    if (isSocketableItem && hasSocketableEffects) {
-      for (const line of section) {
-        if (SOCKETABLE_EFFECT_PATTERN.test(line)) {
-          item.socketableEffects.push(line);
-        }
-      }
-    }
-
-    // Stats (quality, defenses, offense) - skip for Socketable items
-    const hasStatsKeywords =
-      !isSocketableItem &&
-      (sectionContains(
-        section,
-        strings.QUALITY,
-        strings.ARMOUR,
-        strings.EVASION,
-        strings.PHYSICAL_DAMAGE,
-        strings.CRIT_CHANCE,
-        strings.ATTACK_SPEED,
-      ) ||
-        section.some(
-          (line) =>
-            ENERGY_SHIELD_PATTERN.test(line) ||
-            RELOAD_TIME_PATTERN.test(line) ||
-            BLOCK_CHANCE_PATTERN.test(line) ||
-            CRIT_CHANCE_STAT_PATTERN.test(line) ||
-            ATTACK_SPEED_STAT_PATTERN.test(line),
-        ));
-    if (hasStatsKeywords) {
-      const stats = parseStats(section, strings);
-      if (stats.quality) item.quality = stats.quality;
-      if (stats.defenses.armour) item.defenses.armour = stats.defenses.armour;
-      if (stats.defenses.evasion) item.defenses.evasion = stats.defenses.evasion;
-      if (stats.defenses.energyShield) item.defenses.energyShield = stats.defenses.energyShield;
-      if (stats.defenses.blockChance) item.defenses.blockChance = stats.defenses.blockChance;
-      if (stats.offense.physicalDamage) item.offense.physicalDamage = stats.offense.physicalDamage;
-      if (stats.offense.critChance) item.offense.critChance = stats.offense.critChance;
-      if (stats.offense.attacksPerSecond) {
-        item.offense.attacksPerSecond = stats.offense.attacksPerSecond;
-      }
-      if (stats.offense.reloadTime) {
-        item.offense.reloadTime = stats.offense.reloadTime;
-      }
-      if (stats.offense.elementalDamage.length > 0) {
-        item.offense.elementalDamage.push(...stats.offense.elementalDamage);
-      }
-    }
-
-    // Stack size (currency)
-    if (sectionContains(section, strings.STACK_SIZE)) {
-      item.stack = parseStackSize(section, strings);
-    }
-
-    // Flags
-    if (
-      sectionContains(section, strings.CORRUPTED, strings.UNIDENTIFIED, strings.MIRRORED, 'Split')
-    ) {
-      const flags = parseFlags(section, strings);
-      if (flags.corrupted) item.flags.corrupted = true;
-      if (flags.unidentified) item.flags.unidentified = true;
-      if (flags.mirrored) item.flags.mirrored = true;
-      if (flags.split) item.flags.split = true;
-    }
-
-    const hasRuneEffects = section.some((line) => RUNE_EFFECT_PATTERN.test(line));
-    if (hasRuneEffects) {
-      for (const line of section) {
-        if (RUNE_EFFECT_PATTERN.test(line)) {
-          item.runeEffects.push(line);
-        }
-      }
-    }
-
-    const isFlaskItem =
-      item.itemClass.toLowerCase().includes('flask') ||
-      item.itemClass.includes('药剂') ||
-      item.itemClass.includes('藥劑');
-    const hasFlaskProps = section.some(
-      (line) => FLASK_RECOVERY_PATTERN.test(line) || FLASK_CHARGES_PATTERN.test(line),
-    );
-    if (isFlaskItem && hasFlaskProps) {
-      for (const line of section) {
-        if (FLASK_RECOVERY_PATTERN.test(line) || FLASK_CHARGES_PATTERN.test(line)) {
-          item.flaskProperties.push(line);
-        }
-      }
-    }
-
-    const isCharmItem =
-      item.itemClass.toLowerCase().includes('charm') ||
-      item.itemClass.includes('魔符') ||
-      item.itemClass.includes('護符');
-    const hasCharmProps = section.some(
-      (line) =>
-        CHARM_DURATION_PATTERN.test(line) ||
-        CHARM_LIMIT_PATTERN.test(line) ||
-        CHARM_CHARGES_PATTERN.test(line),
-    );
-    if (isCharmItem && hasCharmProps) {
-      for (const line of section) {
-        if (
-          CHARM_DURATION_PATTERN.test(line) ||
-          CHARM_LIMIT_PATTERN.test(line) ||
-          CHARM_CHARGES_PATTERN.test(line)
-        ) {
-          item.charmProperties.push(line);
-        }
-      }
-    }
-
-    // Parse "Limited to: N" for jewels
-    const limitMatch = section.find((line) => LIMIT_PATTERN.test(line));
-    if (limitMatch) {
-      const match = limitMatch.match(LIMIT_PATTERN);
-      if (match) {
-        item.limit = parseInt(match[1]!, 10);
-      }
-    }
-
-    // Map/Logbook detection for Area Level and map properties
-    const isMapItem =
-      item.itemClass.toLowerCase().includes('waystone') ||
-      item.itemClass.toLowerCase().includes('map') ||
-      item.itemClass.toLowerCase().includes('logbook') ||
-      item.itemClass.includes('地圖') ||
-      item.itemClass.includes('地图') ||
-      item.itemClass.includes('航海日誌') ||
-      item.itemClass.includes('航海日志');
-
-    const areaLevelMatch = section.find((line) => AREA_LEVEL_PATTERN.test(line));
-    const hasMapStats = section.some(
-      (line) =>
-        MAP_TIER_PATTERN.test(line) ||
-        MAP_ITEM_QUANTITY_PATTERN.test(line) ||
-        MAP_ITEM_RARITY_PATTERN.test(line) ||
-        MAP_PACK_SIZE_PATTERN.test(line),
-    );
-
-    if (isMapItem && (areaLevelMatch || hasMapStats)) {
-      if (!item.mapProperties) {
-        item.mapProperties = {
-          areaLevel: null,
-          tier: null,
-          itemQuantity: null,
-          itemRarity: null,
-          packSize: null,
-        };
-      }
-
-      if (areaLevelMatch) {
-        const match = areaLevelMatch.match(AREA_LEVEL_PATTERN);
-        if (match) {
-          item.mapProperties.areaLevel = parseInt(match[1]!, 10);
-        }
-      }
-
-      for (const line of section) {
-        const tierMatch = line.match(MAP_TIER_PATTERN);
-        if (tierMatch) item.mapProperties.tier = parseInt(tierMatch[1]!, 10);
-
-        const quantityMatch = line.match(MAP_ITEM_QUANTITY_PATTERN);
-        if (quantityMatch) item.mapProperties.itemQuantity = `${quantityMatch[1]}%`;
-
-        const rarityMatch = line.match(MAP_ITEM_RARITY_PATTERN);
-        if (rarityMatch) item.mapProperties.itemRarity = `${rarityMatch[1]}%`;
-
-        const packSizeMatch = line.match(MAP_PACK_SIZE_PATTERN);
-        if (packSizeMatch) item.mapProperties.packSize = `${packSizeMatch[1]}%`;
-      }
-
-      // Also extract tier from base type if present: "Waystone (Tier 5)"
-      if (item.mapProperties.tier === null) {
-        const baseTierMatch = item.baseType.match(/\(Tier\s*(\d+)\)/i);
-        if (baseTierMatch) {
-          item.mapProperties.tier = parseInt(baseTierMatch[1]!, 10);
-        }
-      }
-    }
-
-    const isGemItem =
-      item.itemClass.toLowerCase().includes('gem') ||
-      item.itemClass.includes('寶石') ||
-      item.itemClass.includes('宝石') ||
-      item.rarity === 'Gem';
-    const hasGemMetadata = section.some(
-      (line) =>
-        GEM_LEVEL_PATTERN.test(line) ||
-        GEM_MANA_COST_PATTERN.test(line) ||
-        GEM_MANA_MULTIPLIER_PATTERN.test(line) ||
-        GEM_CAST_TIME_PATTERN.test(line) ||
-        GEM_TAGS_PATTERN.test(line) ||
-        GEM_CRIT_CHANCE_PATTERN.test(line) ||
-        GEM_EFFECTIVENESS_PATTERN.test(line) ||
-        GEM_RESERVATION_PATTERN.test(line),
-    );
-    const hasGemExperience = isGemItem && section.some((line) => GEM_EXPERIENCE_PATTERN.test(line));
-    if (isGemItem && hasGemMetadata && !item.gemInfo) {
-      const gemInfo: GemInfo = {
-        tags: [],
-        level: null,
-        manaCost: null,
-        manaMultiplier: null,
-        castTime: null,
-        critChance: null,
-        effectiveness: null,
-        reservation: null,
-        experience: null,
-      };
-
-      for (const line of section) {
-        // Tags line (comma-separated words)
-        if (GEM_TAGS_PATTERN.test(line)) {
-          gemInfo.tags = line.split(',').map((t) => t.trim());
-        }
-        // Level
-        const levelMatch = line.match(GEM_LEVEL_PATTERN);
-        if (levelMatch) {
-          gemInfo.level = parseInt(levelMatch[1]!, 10);
-        }
-        // Mana Cost
-        const manaCostMatch = line.match(GEM_MANA_COST_PATTERN);
-        if (manaCostMatch) {
-          gemInfo.manaCost = parseInt(manaCostMatch[1]!, 10);
-        }
-        // Mana Multiplier
-        const manaMultMatch = line.match(GEM_MANA_MULTIPLIER_PATTERN);
-        if (manaMultMatch) {
-          gemInfo.manaMultiplier = parseInt(manaMultMatch[1]!, 10);
-        }
-        // Cast Time
-        const castTimeMatch = line.match(GEM_CAST_TIME_PATTERN);
-        if (castTimeMatch) {
-          gemInfo.castTime = parseFloat(castTimeMatch[1]!);
-        }
-        // Critical Hit Chance
-        const critMatch = line.match(GEM_CRIT_CHANCE_PATTERN);
-        if (critMatch) {
-          gemInfo.critChance = parseFloat(critMatch[1]!);
-        }
-        // Damage Effectiveness
-        const effectivenessMatch = line.match(GEM_EFFECTIVENESS_PATTERN);
-        if (effectivenessMatch) {
-          gemInfo.effectiveness = parseFloat(effectivenessMatch[1]!);
-        }
-        // Reservation (Spirit Gems)
-        const reservationMatch = line.match(GEM_RESERVATION_PATTERN);
-        if (reservationMatch) {
-          gemInfo.reservation = parseInt(reservationMatch[1]!, 10);
-        }
-        // Experience
-        const experienceMatch = line.match(GEM_EXPERIENCE_PATTERN);
-        if (experienceMatch) {
-          gemInfo.experience = experienceMatch[1]!;
-        }
-      }
-
-      item.gemInfo = gemInfo;
-    }
-
-    // Gem experience in a separate section (e.g., "Experience: 125000/250000")
-    if (isGemItem && hasGemExperience) {
-      for (const line of section) {
-        const experienceMatch = line.match(GEM_EXPERIENCE_PATTERN);
-        if (experienceMatch) {
-          if (!item.gemInfo) {
-            item.gemInfo = {
-              tags: [],
-              level: null,
-              manaCost: null,
-              manaMultiplier: null,
-              castTime: null,
-              critChance: null,
-              effectiveness: null,
-              reservation: null,
-              experience: null,
-            };
-          }
-          item.gemInfo.experience = experienceMatch[1]!;
-        }
-      }
-    }
-
-    // Flavor text (quoted text in unique items)
-    const hasDoubleQuotes = section.some((line) => line.startsWith('"') && line.endsWith('"'));
-    const hasGuillemets = section.some((line) => line.startsWith('«') || line.endsWith('»'));
-    if (hasDoubleQuotes) {
-      item.flavorText = section
-        .filter((line) => line.startsWith('"'))
-        .map((line) => line.replace(/^"|"$/g, ''))
-        .join('\n');
-    } else if (hasGuillemets) {
-      item.flavorText = section.map((line) => line.replace(/^«|»$/g, '')).join('\n');
-    }
-
-    // Rune section with header (e.g., "Rune: Desert Rune (Level 1)\n+10% to Fire Resistance")
-    const isRuneSectionHeader = section.some((line) => RUNE_SECTION_HEADER_PATTERN.test(line));
-    if (isRuneSectionHeader) {
-      for (const line of section) {
-        if (RUNE_SECTION_HEADER_PATTERN.test(line)) continue;
-        if (line.trim()) {
-          item.mods.push({ text: line.trim(), type: 'rune' });
-        }
-      }
-    }
-
-    // Modifiers (lines with mod markers or plain explicit mods)
-    const hasModMarkers = section.some((line) =>
-      Object.values(MOD_MARKERS).some((regex) => regex.test(line)),
-    );
-    // Check if this is a stats section that should not be treated as mods
-    const isStatsSection =
-      !isSocketableItem &&
-      (sectionContains(
-        section,
-        strings.QUALITY,
-        strings.ARMOUR,
-        strings.EVASION,
-        strings.PHYSICAL_DAMAGE,
-        strings.CRIT_CHANCE,
-        strings.ATTACK_SPEED,
-      ) ||
-        section.some(
-          (line) =>
-            ENERGY_SHIELD_PATTERN.test(line) ||
-            RELOAD_TIME_PATTERN.test(line) ||
-            BLOCK_CHANCE_PATTERN.test(line) ||
-            CRIT_CHANCE_STAT_PATTERN.test(line) ||
-            ATTACK_SPEED_STAT_PATTERN.test(line),
-        ));
-
-    const isMapStatsSection = isMapItem && hasMapStats;
-
-    // Check if this is a sockets section (handles variant spellings)
-    const isSocketsSection =
-      sectionContains(section, strings.SOCKETS) ||
-      section.some((line) => SOCKETS_PATTERN.test(line));
-
-    const isItemLevelSection =
-      sectionContains(section, strings.ITEM_LEVEL) ||
-      section.some((line) => ITEM_LEVEL_PATTERN.test(line));
-
-    const isRuneEffectsSection = hasRuneEffects;
-    const isSocketableEffectsSection = isSocketableItem && hasSocketableEffects;
-    const isFlaskPropsSection = isFlaskItem && hasFlaskProps;
-    const isCharmPropsSection = isCharmItem && hasCharmProps;
-    const isAreaLevelSection = isMapItem && areaLevelMatch !== undefined;
-    const isGemInfoSection = isGemItem && hasGemMetadata;
-    const isSingleItemTypeSection =
-      section.length === 1 && ITEM_TYPE_IDENTIFIERS.has(section[0]!.trim());
-    const isLimitSection = section.length === 1 && LIMIT_PATTERN.test(section[0]!);
-
-    // For socketable items, a section with just "Level: N" is a base property
-    const isSocketableLevelSection =
-      isSocketableItem && !isGemItem && section.length === 1 && GEM_LEVEL_PATTERN.test(section[0]!);
-    if (isSocketableLevelSection) {
-      const levelMatch = section[0]!.match(GEM_LEVEL_PATTERN);
-      if (levelMatch && item.itemLevel === null) {
-        item.itemLevel = parseInt(levelMatch[1]!, 10);
-      }
-    }
-
-    // BUG-06: For gems, non-metadata text sections are descriptions
-    const isGemDescriptionSection =
-      isGemItem &&
-      !hasGemMetadata &&
-      !hasGemExperience &&
-      !isItemLevelSection &&
-      !sectionContains(section, strings.REQUIRES, strings.REQUIREMENTS_HEADER) &&
-      !sectionContains(section, strings.CORRUPTED, strings.UNIDENTIFIED, strings.MIRRORED) &&
-      section.length > 0 &&
-      section.every(
-        (line) =>
-          !Object.values(MOD_MARKERS).some((regex) => regex.test(line)) &&
-          !USAGE_INSTRUCTION_PATTERN.test(line),
-      );
-
-    if (isGemDescriptionSection && item.gemInfo) {
-      for (const line of section) {
-        if (!USAGE_INSTRUCTION_PATTERN.test(line) && line.trim()) {
-          item.gemDescription.push(line);
-        }
-      }
-    }
-
-    const isModSection =
-      !isRuneSectionHeader &&
-      !isSocketableLevelSection &&
-      !isGemDescriptionSection &&
-      (hasModMarkers ||
-        (section.length > 0 &&
-          !sectionContains(
-            section,
-            strings.ITEM_LEVEL,
-            strings.ITEM_CLASS,
-            strings.RARITY,
-            strings.SOCKETS,
-            strings.REQUIRES,
-            strings.REQUIREMENTS_HEADER,
-            strings.STACK_SIZE,
-            strings.CORRUPTED,
-            strings.UNIDENTIFIED,
-            strings.MIRRORED,
-          ) &&
-          !isStatsSection &&
-          !isMapStatsSection &&
-          !isSocketsSection &&
-          !isItemLevelSection &&
-          !isRuneEffectsSection &&
-          !isSocketableEffectsSection &&
-          !isFlaskPropsSection &&
-          !isCharmPropsSection &&
-          !isAreaLevelSection &&
-          !isGemInfoSection &&
-          !hasGemExperience &&
-          !isSingleItemTypeSection &&
-          !isLimitSection &&
-          !section.some((line) => line.startsWith('"')) &&
-          !section.some((line) => line.startsWith('«'))));
-
-    if (isModSection) {
-      for (const line of section) {
-        if (SOCKETED_RUNE_PATTERN.test(line)) continue;
-        if (USAGE_INSTRUCTION_PATTERN.test(line)) continue;
-        if (ITEM_TYPE_IDENTIFIERS.has(line.trim())) continue;
-        if (line.trim() === 'Map' || line.trim() === '地圖' || line.trim() === '地图') continue;
-        if (MODIFIER_HEADER_PATTERN.test(line)) continue;
-        if (LIMIT_PATTERN.test(line)) continue;
-        if (TIER_PATTERN.test(line)) continue;
-        if (GEM_EXPERIENCE_PATTERN.test(line)) continue;
-        if (isSocketableItem && SOCKETABLE_EFFECT_PATTERN.test(line)) continue;
-
-        const mod = parseMod(line);
-        if (mod.text) {
-          item.mods.push(mod);
-        }
-      }
-    }
-  }
-
-  // Extract granted skills from mods
+  // Post-processing: extract granted skills from mods
   item.grantedSkills = extractGrantedSkills(item.mods);
 
   if (item.grantedSkills.length > 0) {

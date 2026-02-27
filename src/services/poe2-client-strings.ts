@@ -517,6 +517,134 @@ export const USAGE_INSTRUCTION_PATTERN =
   /^(?:Right click|Click derecho|Clique com o botão direito|Faites un clic droit|Rechtsklicken|右クリック|右键|右鍵|우클릭|คลิกขวา|Place into an(?:| allocated)|Can be (?:Socketed|used)|Tablets are consumed|Travel to this|Reisen Sie zu|Voyagez vers|Usalo en|Use em|Utiliser dans)/i;
 
 /**
+ * Pattern to match gem Level lines.
+ */
+export const GEM_LEVEL_PATTERN =
+  /^(?:Level|Уровень|레벨|等級|等级|Stufe|Niveau|レベル|Nivel|Nível|เลเวล)[:\s]+(\d+)/i;
+
+/** Pattern to match gem Mana Cost lines. */
+export const GEM_MANA_COST_PATTERN =
+  /^(?:Mana Cost|Затраты маны|Расход маны|마나 소모|魔力消耗|Manakosten|Coût en mana|マナコスト|Coste de maná|Custo de Mana|ค่ามานา)[:\s]+(\d+)/i;
+
+/**
+ * Pattern to match gem Mana Multiplier lines (support gems).
+ */
+export const GEM_MANA_MULTIPLIER_PATTERN =
+  /^(?:Mana Multiplier|Множитель маны|마나 배율|魔力倍率|Manamultiplikator|Multiplicateur de mana|マナ倍率|Multiplicador de maná|Multiplicador de Mana|ตัวคูณมานา)[:\s]+(\d+)%/i;
+
+/**
+ * Pattern to match gem Cast Time lines.
+ */
+export const GEM_CAST_TIME_PATTERN =
+  /^(?:Cast Time|Время применения|시전 시간|施放時間|施放时间|Zauberzeit|Temps d'incantation|詠唱時間|Tiempo de lanzamiento|Tempo de Conjuração|เวลาร่าย)[:\s]+([\d.]+)\s*(?:sec|сек|초|秒|Sek|s|วินาที)/i;
+
+/**
+ * Pattern to match gem tags line (comma-separated words without colons).
+ * Tags are the first line of gem content: "Chaos, Spell, Projectile, Duration"
+ */
+export const GEM_TAGS_PATTERN =
+  /^[A-Za-zА-Яа-яぁ-んァ-ン一-龯가-힣ก-๙]+(?:,\s*[A-Za-zА-Яа-яぁ-んァ-ン一-龯가-힣ก-๙]+)+$/;
+
+/** Pattern to match gem Critical Hit Chance lines. */
+export const GEM_CRIT_CHANCE_PATTERN =
+  /^(?:Critical Hit Chance|Шанс критического удара|크리티컬 확률|暴擊率|爆击率|Kritische Trefferchance|Chances de coup critique|クリティカル率|Probabilidad de golpe crítico|Chance de Acerto Crítico|โอกาสคริติคอล)[:\s]+([\d.]+)%?/i;
+
+/** Pattern to match gem Damage Effectiveness lines. */
+export const GEM_EFFECTIVENESS_PATTERN =
+  /^(?:Damage Effectiveness|Эффективность урона|피해 효ก|傷害效率|伤害效率|Schadenseffektivität|Efficacité des dégâts|ダメージ係数|Efectividad del daño|Eficácia de Dano|ประสิทธิภาพความเสียหาย)[:\s]+([\d.]+)%?/i;
+
+/** Pattern to match modifier header lines like `{ Prefix Modifier }` (filtered from mods). */
+export const MODIFIER_HEADER_PATTERN = /^\{[^}]+\}$/;
+
+/** Pattern to match "Limited to: N" lines (jewels). */
+export const LIMIT_PATTERN =
+  /^(?:Limited to|\u041e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u043e|\uc81c\ud55c|限制|Begrenzt auf|Limité à|上限|Limitado a|Limitado a|จำกัด)[:\s]+(\d+)$/i;
+
+/** Pattern to match "Tier: N" lines (uncut gems, waystones). */
+export const TIER_PATTERN =
+  /^(?:Tier|Уровень|티ิอ|階層|阶层|Stufe|Palier|ティア|Nivel|Nível|ระดับ)[:\s]+(\d+)$/i;
+
+/** Pattern to match socketable effect lines (runes, soul cores). */
+export const SOCKETABLE_EFFECT_PATTERN =
+  /^(?:Weapons?|Armou?r|Helmet|Gloves|Boots|Shield|Оружие|Доспех|Шлем|Перчатки|Ботинки|Щир|무기|갑옷|투구|장갑|신발|방패|武器|護甲|頭盔|手套|鞋子|盾|护甲|Waffe|Rüstung|Helm|Handschuhe|Stiefel|Schild|arme|armure|casque|gants|bottes|bouclier|武器|鎧|兜|グローブ|ブーツ|シールド|arma|armadura|casco|guantes|botas|escudo|capacete|luvas|อาวุธ|เกราะ|หมวก|ถุงมือ|รองเท้า|โล่)[:\s]+.*(?:increased|reduced|%|\+|to|\u0443величение|\u0443меньшение|증가|감소|增加|減少)/i;
+
+/** Fallback pattern to match Item Class lines across all languages (used when primary ClientStrings miss a variant). */
+export const ITEM_CLASS_PATTERN =
+  /^(?:Item Class|Класс предмета|아이템 종류|物品種類|物品類別|物品类别|Gegenstandsklasse|Classe d'objet|アイテムクラス|Clase de objeto|Classe (?:do|de) Item|ประเภทไอเท็ม|ประเภทไอเทม|ชนิดไอเทม)[：:]\s*/;
+
+/** Fallback pattern to match Item Level lines across all languages. */
+export const ITEM_LEVEL_PATTERN =
+  /^(?:Item Level|Уровень предмета|아이템 레벨|物品等級|物品等级|Gegenstandsstufe|Niveau de l'objet|アイテムレベル|Nivel (?:del? )?objeto|Nível do Item|เลเวลไอเท็ม|เลเวลไอเทม)[：:]\s*(\d+)/;
+
+/** Pattern to match rune section headers across all supported languages. */
+export const RUNE_SECTION_HEADER_PATTERN =
+  /^(?:Rune|Socketed Runes?|Вставленные руны|Руна|Eingesetzte Runen?|Rune[s]? (?:insérées?|sertie)|ルーン|장착된 룬|鑲嵌的符文|镶嵌的符文|Runa[s]? (?:engarzada|Encaixada)|รูนที่ใส่)[:\s]/i;
+
+/** Pattern to match gem Reservation lines (Spirit Gems). */
+export const GEM_RESERVATION_PATTERN =
+  /^(?:Reservation|Резервирование|Резерв|예약|保留|Reservierung|Réservation|リザーブ|Reserva|Reserva|สำรอง)[:\s]+(\d+)\s*(?:Spirit|духа|Geist|esprit|espíritu|espírito|スピリット|정신력|靈魂|灵魂|จิตวิญญาณ)/i;
+
+/** Pattern to match gem Experience lines. */
+export const GEM_EXPERIENCE_PATTERN =
+  /^(?:Experience|Опыт|경험치|經驗|经验|Erfahrung|Expérience|経験値|Experiencia|Experiência|ค่าประสบการณ์)[:\s]+(\d[\d,/]+)/i;
+
+/** Pattern to match map property lines (waystones). */
+export const MAP_TIER_PATTERN =
+  /^(?:Map Tier|Уровень карты|지도 등급|地圖階級|地图阶级|Kartenstufe|Palier de carte|マップティア|Nivel (?:del? )?mapa|Nível do Mapa|ระดับแผนที่)[:\s]+(\d+)/i;
+
+export const MAP_ITEM_QUANTITY_PATTERN =
+  /^(?:Item Quantity|Количество предметов|아이템 수량|物品數量|物品数量|Gegenstandsmenge|Quantité d'objets|アイテム数量|Cantidad de objetos|Quantidade de Itens|จำนวนไอเทม)[:\s]+([+-]?\d+)%/i;
+
+export const MAP_ITEM_RARITY_PATTERN =
+  /^(?:Item Rarity|Редкость предметов|아이템 희귀도|物品稀有度|Gegenstandsseltenheit|Rareté des objets|アイテムレアリティ|Rareza de objetos|Raridade de Itens|ความหายากไอเทม)[:\s]+([+-]?\d+)%/i;
+
+export const MAP_PACK_SIZE_PATTERN =
+  /^(?:Monster Pack Size|Размер группы монстров|몬스터 무리 크기|怪物群大小|Monstergruppengröße|Taille de groupe de monstres|モンスターパックサイズ|Tamaño de grupo de monstruos|Tamanho do Grupo de Monstros|ขนาดกลุ่มมอนสเตอร์)[:\s]+([+-]?\d+)%/i;
+
+/** Pattern to match charm charge consumption lines. */
+export const CHARM_CHARGES_PATTERN =
+  /^(?:Consumes|Потребляет|소모|消耗|Verbraucht|Consomme|消費する|Consume|Consome|ใช้)\s+\d+/i;
+
+/**
+ * Pattern to match Crit Chance header stat lines across all languages.
+ * Handles both abbreviated and full forms (e.g., Russian abbreviated vs full).
+ */
+export const CRIT_CHANCE_STAT_PATTERN =
+  /^(?:Critical Strike Chance|Шанс крит(?:\.|ического) удара|치명타 확률|暴擊率|暴击率|Kritische Trefferchance|Chances de coup critique|クリティカル率|Probabilidad de impacto crítico|Chance de Acerto Crítico|โอกาสคริติคอล)[：:]/i;
+
+/**
+ * Pattern to match Attacks per Second header stat lines across all languages.
+ * Handles alternate forms (e.g., Russian "Время между атаками").
+ */
+export const ATTACK_SPEED_STAT_PATTERN =
+  /^(?:Attacks per Second|Атак в секунду|Время между атаками|초당 공격 횟수|每秒攻擊次數|每秒攻击次数|Angriffe pro Sekunde|Attaques par seconde|毎秒攻撃回数|Ataques por segundo|Ataques por Segundo|จำนวนครั้งการโจมตีต่อวินาที)[：:]/i;
+
+/**
+ * Alternate rarity values for languages with gender variants or transliterations.
+ * Maps ItemRarity string to array of alternate values to check.
+ */
+export const RARITY_ALTERNATES: Record<string, string[]> = {
+  Rare: ['Rara', '레어', 'แรร์'],
+  Magic: ['Mágica', '매직'],
+  Unique: ['Única'],
+};
+
+/** Pattern to match gem-class item class strings across all languages. */
+export const ITEM_CLASS_GEM_PATTERN = /gem|寶石|宝石/i;
+
+/** Pattern to match flask-class item class strings across all languages. */
+export const ITEM_CLASS_FLASK_PATTERN = /flask|药剂|藥劑/i;
+
+/** Pattern to match charm-class item class strings across all languages. */
+export const ITEM_CLASS_CHARM_PATTERN = /charm|魔符|護符/i;
+
+/** Pattern to match map/waystone/logbook item class strings across all languages. */
+export const ITEM_CLASS_MAP_PATTERN = /waystone|map|logbook|地圖|地图|航海日誌|航海日志/i;
+
+/** Pattern to match socketable item class strings across all languages. */
+export const ITEM_CLASS_SOCKETABLE_PATTERN = /socketable|插槽物品|鑲嵌物/i;
+
+/**
  * Single-word item type identifiers that appear alone in a section.
  * These are weapon/item categories and should not be parsed as mods.
  */
@@ -607,95 +735,6 @@ export const ITEM_TYPE_IDENTIFIERS = new Set([
   '地圖',
 ]);
 
-/**
- * Pattern to match gem Level lines.
- */
-export const GEM_LEVEL_PATTERN =
-  /^(?:Level|Уровень|레벨|等級|等级|Stufe|Niveau|レベル|Nivel|Nível|เลเวล)[:\s]+(\d+)/i;
-
-/** Pattern to match gem Mana Cost lines. */
-export const GEM_MANA_COST_PATTERN =
-  /^(?:Mana Cost|Затраты маны|Расход маны|마나 소모|魔力消耗|Manakosten|Coût en mana|マナコスト|Coste de maná|Custo de Mana|ค่ามานา)[:\s]+(\d+)/i;
-
-/**
- * Pattern to match gem Mana Multiplier lines (support gems).
- */
-export const GEM_MANA_MULTIPLIER_PATTERN =
-  /^(?:Mana Multiplier|Множитель маны|마나 배율|魔力倍率|Manamultiplikator|Multiplicateur de mana|マナ倍率|Multiplicador de maná|Multiplicador de Mana|ตัวคูณมานา)[:\s]+(\d+)%/i;
-
-/**
- * Pattern to match gem Cast Time lines.
- */
-export const GEM_CAST_TIME_PATTERN =
-  /^(?:Cast Time|Время применения|시전 시간|施放時間|施放时间|Zauberzeit|Temps d'incantation|詠唱時間|Tiempo de lanzamiento|Tempo de Conjuração|เวลาร่าย)[:\s]+([\d.]+)\s*(?:sec|сек|초|秒|Sek|s|วินาที)/i;
-
-/**
- * Pattern to match gem tags line (comma-separated words without colons).
- * Tags are the first line of gem content: "Chaos, Spell, Projectile, Duration"
- */
-export const GEM_TAGS_PATTERN =
-  /^[A-Za-zА-Яа-яぁ-んァ-ン一-龯가-힣ก-๙]+(?:,\s*[A-Za-zА-Яа-яぁ-んァ-ン一-龯가-힣ก-๙]+)+$/;
-
-/** Pattern to match gem Critical Hit Chance lines. */
-export const GEM_CRIT_CHANCE_PATTERN =
-  /^(?:Critical Hit Chance|Шанс критического удара|크리티컬 확률|暴擊率|爆击率|Kritische Trefferchance|Chances de coup critique|クリティカル率|Probabilidad de golpe crítico|Chance de Acerto Crítico|โอกาสคริติคอล)[:\s]+([\d.]+)%?/i;
-
-/** Pattern to match gem Damage Effectiveness lines. */
-export const GEM_EFFECTIVENESS_PATTERN =
-  /^(?:Damage Effectiveness|Эффективность урона|피해 효ก|傷害效率|伤害效率|Schadenseffektivität|Efficacité des dégâts|ダメージ係数|Efectividad del daño|Eficácia de Dano|ประสิทธิภาพความเสียหาย)[:\s]+([\d.]+)%?/i;
-
-/** Pattern to match modifier header lines like `{ Prefix Modifier }` (filtered from mods). */
-export const MODIFIER_HEADER_PATTERN = /^\{[^}]+\}$/;
-
-/** Pattern to match "Limited to: N" lines (jewels). */
-export const LIMIT_PATTERN =
-  /^(?:Limited to|\u041e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u043e|\uc81c\ud55c|限制|Begrenzt auf|Limité à|上限|Limitado a|Limitado a|จำกัด)[:\s]+(\d+)$/i;
-
-/** Pattern to match "Tier: N" lines (uncut gems, waystones). */
-export const TIER_PATTERN =
-  /^(?:Tier|Уровень|티ิอ|階層|阶层|Stufe|Palier|ティア|Nivel|Nível|ระดับ)[:\s]+(\d+)$/i;
-
-/** Pattern to match socketable effect lines (runes, soul cores). */
-export const SOCKETABLE_EFFECT_PATTERN =
-  /^(?:Weapons?|Armou?r|Helmet|Gloves|Boots|Shield|Оружие|Доспех|Шлем|Перчатки|Ботинки|Щир|무기|갑옷|투구|장갑|신발|방패|武器|護甲|頭盔|手套|鞋子|盾|护甲|Waffe|Rüstung|Helm|Handschuhe|Stiefel|Schild|arme|armure|casque|gants|bottes|bouclier|武器|鎧|兜|グローブ|ブーツ|シールド|arma|armadura|casco|guantes|botas|escudo|capacete|luvas|อาวุธ|เกราะ|หมวก|ถุงมือ|รองเท้า|โล่)[:\s]+.*(?:increased|reduced|%|\+|to|\u0443величение|\u0443меньшение|증가|감소|增加|減少)/i;
-
-/** Fallback pattern to match Item Class lines across all languages (used when primary ClientStrings miss a variant). */
-export const ITEM_CLASS_PATTERN =
-  /^(?:Item Class|Класс предмета|아이템 종류|物品種類|物品類別|物品类别|Gegenstandsklasse|Classe d'objet|アイテムクラス|Clase de objeto|Classe (?:do|de) Item|ประเภทไอเท็ม|ประเภทไอเทม|ชนิดไอเทม)[：:]\s*/;
-
-/** Fallback pattern to match Item Level lines across all languages. */
-export const ITEM_LEVEL_PATTERN =
-  /^(?:Item Level|Уровень предмета|아이템 레벨|物品等級|物品等级|Gegenstandsstufe|Niveau de l'objet|アイテムレベル|Nivel (?:del? )?objeto|Nível do Item|เลเวลไอเท็ม|เลเวลไอเทม)[：:]\s*(\d+)/;
-
-/** Pattern to match rune section headers across all supported languages. */
-export const RUNE_SECTION_HEADER_PATTERN =
-  /^(?:Rune|Socketed Runes?|Вставленные руны|Руна|Eingesetzte Runen?|Rune[s]? (?:insérées?|sertie)|ルーン|장착된 룬|鑲嵌的符文|镶嵌的符文|Runa[s]? (?:engarzada|Encaixada)|รูนที่ใส่)[:\s]/i;
-
-/** Pattern to match gem Reservation lines (Spirit Gems). */
-export const GEM_RESERVATION_PATTERN =
-  /^(?:Reservation|Резервирование|Резерв|예약|保留|Reservierung|Réservation|リザーブ|Reserva|Reserva|สำรอง)[:\s]+(\d+)\s*(?:Spirit|духа|Geist|esprit|espíritu|espírito|スピリット|정신력|靈魂|灵魂|จิตวิญญาณ)/i;
-
-/** Pattern to match gem Experience lines. */
-export const GEM_EXPERIENCE_PATTERN =
-  /^(?:Experience|Опыт|경험치|經驗|经验|Erfahrung|Expérience|経験値|Experiencia|Experiência|ค่าประสบการณ์)[:\s]+(\d[\d,/]+)/i;
-
-/** Pattern to match map property lines (waystones). */
-export const MAP_TIER_PATTERN =
-  /^(?:Map Tier|Уровень карты|지도 등급|地圖階級|地图阶级|Kartenstufe|Palier de carte|マップティア|Nivel (?:del? )?mapa|Nível do Mapa|ระดับแผนที่)[:\s]+(\d+)/i;
-
-export const MAP_ITEM_QUANTITY_PATTERN =
-  /^(?:Item Quantity|Количество предметов|아이템 수량|物品數量|物品数量|Gegenstandsmenge|Quantité d'objets|アイテム数量|Cantidad de objetos|Quantidade de Itens|จำนวนไอเทม)[:\s]+([+-]?\d+)%/i;
-
-export const MAP_ITEM_RARITY_PATTERN =
-  /^(?:Item Rarity|Редкость предметов|아이템 희귀도|物品稀有度|Gegenstandsseltenheit|Rareté des objets|アイテムレアリティ|Rareza de objetos|Raridade de Itens|ความหายากไอเทม)[:\s]+([+-]?\d+)%/i;
-
-export const MAP_PACK_SIZE_PATTERN =
-  /^(?:Monster Pack Size|Размер группы монстров|몬스터 무리 크기|怪物群大小|Monstergruppengröße|Taille de groupe de monstres|モンスターパックサイズ|Tamaño de grupo de monstruos|Tamanho do Grupo de Monstros|ขนาดกลุ่มมอนสเตอร์)[:\s]+([+-]?\d+)%/i;
-
-/** Pattern to match charm charge consumption lines. */
-export const CHARM_CHARGES_PATTERN =
-  /^(?:Consumes|Потребляет|소모|消耗|Verbraucht|Consomme|消費する|Consume|Consome|ใช้)\s+\d+/i;
-
 /** Mod type markers across all supported PoE2 languages. */
 export const MOD_MARKERS = {
   implicit:
@@ -708,20 +747,6 @@ export const MOD_MARKERS = {
   fractured: /\(fractured\)$/i,
   desecrated: /\(desecrated\)$/i,
 } as const;
-
-/**
- * Pattern to match Crit Chance header stat lines across all languages.
- * Handles both abbreviated and full forms (e.g., Russian abbreviated vs full).
- */
-export const CRIT_CHANCE_STAT_PATTERN =
-  /^(?:Critical Strike Chance|Шанс крит(?:\.|ического) удара|치명타 확률|暴擊率|暴击率|Kritische Trefferchance|Chances de coup critique|クリティカル率|Probabilidad de impacto crítico|Chance de Acerto Crítico|โอกาสคริติคอล)[：:]/i;
-
-/**
- * Pattern to match Attacks per Second header stat lines across all languages.
- * Handles alternate forms (e.g., Russian "Время между атаками").
- */
-export const ATTACK_SPEED_STAT_PATTERN =
-  /^(?:Attacks per Second|Атак в секунду|Время между атаками|초당 공격 횟수|每秒攻擊次數|每秒攻击次数|Angriffe pro Sekunde|Attaques par seconde|毎秒攻撃回数|Ataques por segundo|Ataques por Segundo|จำนวนครั้งการโจมตีต่อวินาที)[：:]/i;
 
 /** Augmented value marker. */
 export const AUGMENTED_MARKER = /\(augmented\)/i;
