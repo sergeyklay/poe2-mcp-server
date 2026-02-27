@@ -20,6 +20,7 @@ All data is sourced from **public APIs only**. No API keys, no GGG OAuth registr
 | `poe2_pob_decode`       | Decode builds from pobb.in, poe.ninja, or local files | [pobb.in](https://pobb.in/) / [poe.ninja](https://poe.ninja/poe2/pob) / local |
 | `poe2_pob_local_builds` | List saved PoB2 builds from local filesystem          | Local PoB2                                                                    |
 | `poe2_pob_compare`      | Compare two builds to identify gear/skill differences | [pobb.in](https://pobb.in/) / [poe.ninja](https://poe.ninja/poe2/pob) / local |
+| `poe2_parse_item`       | Parse item clipboard text into structured breakdown   | Client-side (no API)                                                          |
 
 ## Requirements
 
@@ -134,35 +135,56 @@ Once connected, try asking:
 - _"Analyze poe.ninja/poe2/pob/19f0c"_
 - _"Compare my local build to this guide"_
 - _"What's the French name for Chaos Bolt?"_ → uses `poe2_db_lookup` with `lang="fr"`
+- _"Parse this item I just found: [paste Ctrl+C text]"_
 
 ### Example Conversation
 
 **User:**
 
 ```plaintext
-I'm 42 lvl at Act 3 and I just dropped a Divine Orb.
-How much is it worth, what should I buy with it?
+I just found this, is it any good?
+
+Item Class: Body Armours
+Rarity: Rare
+Empyrean Shelter
+Vaal Regalia
+--------
+Quality: +20% (augmented)
+--------
+Energy Shield: 286 (augmented)
+--------
+Requirements:
+Level: 68
+Int: 194
+--------
+Sockets: S S
+--------
+Item Level: 74
+--------
++42 to maximum Life (implicit)
+--------
+78% increased Energy Shield (rune)
+--------
++92 to maximum Energy Shield
++38% to Lightning Resistance
++24% to Cold Resistance
+14% increased Stun and Block Recovery
 ```
 
 **Claude:**
 
 ```plaintext
-Let me check the current price of a Divine Orb for you.
+This is a strong ES chest for mid-mapping. Here's the breakdown:
 
-Nice drop! A Divine Orb is currently worth about 27.5 Chaos Orbs in Fate of the Vaal league,
-and it's one of the more valuable currency drops you can get during the campaign.
+- 286 Energy Shield at +20% quality with a rune boosting ES by 78% — that's solid.
+- +92 flat ES on top of the base makes this a high-ES piece for its tier.
+- Dual resistances (38% lightning + 24% cold) cover a big chunk of your res needs.
+- +42 max life implicit gives hybrid survivability.
 
-Don't spend it yet. At level 42 in Act 3, you're still in the leveling phase — any gear you buy
-now will be replaced within a few levels. The standard advice for your stage is:
+For a level 68 Vaal Regalia at item level 74, this is a keeper. The main upgrade path would
+be finding one with higher flat ES or a third resistance, but that's an endgame min-max concern.
 
-- Divine Orbs are used to reroll the values of explicit modifiers on items — that's an endgame
-  activity, not something useful during the campaign.
-- If you really want to trade it, you could sell it for ~27 Chaos Orbs and use those later at endgame
-  to buy specific gear upgrades for your Lich build once you've finished the campaign and know exactly
-  what you need.
-
-Stash it and keep pushing through Act 3. It'll be much more valuable to you at endgame than anything
-you could buy with it right now.
+Use it now — it'll carry you through T5+ maps comfortably.
 ```
 
 ---
@@ -213,8 +235,8 @@ without being condescending. Communicate in the user's language.
 ## Tool Usage Protocol
 
 You have access to a PoE 2 MCP server with tools for: game logs, wiki, datamined game database
-(poe2db), currency prices, item prices, and meta build stats. These tools are your PRIMARY data
-source for everything PoE 2 related.
+(poe2db), currency prices, item prices, item clipboard parsing, and meta build stats. These tools
+are your PRIMARY data source for everything PoE 2 related.
 
 For EVERY user message about gameplay, follow this sequence BEFORE responding:
 
@@ -234,7 +256,7 @@ NEVER ask the user for information you can obtain from tools:
 - "How much does Y cost?" → use `poe2_currency_check` or `poe2_item_price`
 - "What builds are popular?" → use `poe2_meta_builds`
 
-Only ask the user for things no tool can provide: screenshots of gear, personal preferences.
+Only ask the user for things no tool can provide: personal preferences, build goals.
 
 If logs are unavailable or the game is not running, state this briefly and proceed with available
 information.
@@ -256,8 +278,9 @@ If the player uses a non-English game client:
 **Correct behavior:**
 
 1. Call `poe2_log_summary` → determine current zone and level
-2. Look up relevant game mechanics via `poe2_db_lookup` or `poe2_wiki_search`
-3. Respond with specific, actionable steps based on actual player state
+2. If the user pastes item text, call `poe2_parse_item` to get structured data
+3. Look up relevant game mechanics via `poe2_db_lookup` or `poe2_wiki_search`
+4. Respond with specific, actionable steps based on actual player state
 
 **Wrong:** Ask "What zone are you in?" when logs have this information.
 
@@ -311,17 +334,19 @@ Default league: **Fate of the Vaal** (patch 0.4.x). Any active PoE2 league can b
 ```plaintext
 poe2-mcp-server/
 ├── src/
-│   ├── index.ts              # Entry point: server init, stdio transport
+│   ├── index.ts                    # Entry point: server init, stdio transport
 │   ├── services/
-│   │   └── api.ts            # HTTP client, rate limiter, logs parsing
+│   │   ├── api.ts                  # HTTP client, rate limiter, logs parsing
+│   │   └── poe2-client-strings.ts  # 11-language keyword mappings for item parsing
 │   └── tools/
-│       ├── currency.ts       # Currency exchange rate tools
-│       ├── items.ts          # Exchange item price tools
-│       ├── wiki.ts           # Wiki search & poe2db lookup
-│       ├── builds.ts         # Meta build overview
-│       ├── logfile.ts        # Local logs parser
-│       └── pob.ts            # Path of Building integration
-├── dist/                     # Compiled output (npm run build)
+│       ├── currency.ts             # Currency exchange rate tools
+│       ├── items.ts                # Exchange item price tools
+│       ├── item.ts                 # Clipboard item parser (11 languages)
+│       ├── wiki.ts                 # Wiki search & poe2db lookup
+│       ├── builds.ts               # Meta build overview
+│       ├── logfile.ts              # Local logs parser
+│       └── pob.ts                  # Path of Building integration
+├── dist/                           # Compiled output (npm run build)
 ├── package.json
 ├── tsconfig.json
 └── README.md
