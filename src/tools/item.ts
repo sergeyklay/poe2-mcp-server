@@ -57,6 +57,7 @@ import {
   ITEM_CLASS_CHARM_PATTERN,
   ITEM_CLASS_MAP_PATTERN,
   ITEM_CLASS_SOCKETABLE_PATTERN,
+  STANDALONE_RUNE_NAME_PATTERN,
   type ClientStrings,
   type SupportedLanguage,
 } from '../services/poe2-client-strings.js';
@@ -173,6 +174,8 @@ interface ParsedItem {
   mapProperties: MapProperties | null;
   /** Jewel limit restriction (e.g., "Limited to: 1") */
   limit: number | null;
+  /** Item tier (e.g., uncut gems). */
+  tier: number | null;
   flavorText: string | null;
   flags: {
     corrupted: boolean;
@@ -350,10 +353,9 @@ function parseHeader(
  */
 function parseNumericStat(line: string): NumericStat | null {
   const augmented = AUGMENTED_MARKER.test(line);
-  // Match percentage (e.g., "+20%") or plain number (e.g., "123")
-  const match = line.match(/[+-]?(\d+(?:\.\d+)?)/);
+  const match = line.match(/[+-]?(\d+(?:[.,]\d+)?)/);
   if (!match) return null;
-  return { value: parseFloat(match[1]!), augmented };
+  return { value: parseFloat(match[1]!.replace(',', '.')), augmented };
 }
 
 /**
@@ -411,6 +413,20 @@ function parseStats(
       defenses.blockChance = parseNumericStat(line);
     } else if (line.startsWith(strings.PHYSICAL_DAMAGE)) {
       offense.physicalDamage = parseDamageRange(line);
+    } else if (line.startsWith(strings.ELEMENTAL_DAMAGE)) {
+      const after = line.slice(strings.ELEMENTAL_DAMAGE.length);
+      const elementParts = after.split(',');
+      for (const part of elementParts) {
+        const rangeMatch = part.match(/(\d+)-(\d+)/);
+        const typeMatch = part.match(/\(([^)]+)\)/);
+        if (rangeMatch) {
+          offense.elementalDamage.push({
+            min: parseInt(rangeMatch[1]!, 10),
+            max: parseInt(rangeMatch[2]!, 10),
+            type: typeMatch ? typeMatch[1]! : 'Elemental',
+          });
+        }
+      }
     } else if (line.startsWith(strings.CRIT_CHANCE) || CRIT_CHANCE_STAT_PATTERN.test(line)) {
       offense.critChance = parseNumericStat(line);
     } else if (line.startsWith(strings.ATTACK_SPEED) || ATTACK_SPEED_STAT_PATTERN.test(line)) {
@@ -711,9 +727,9 @@ const parseSocketableEffectsSection: SectionParser = (section, item, ctx): Secti
   return 'consumed';
 };
 
-/** Parse Stats section (quality, defenses, offense). Skipped for socketable items. */
+/** Parse Stats section (quality, defenses, offense). Skipped for socketable items and gems. */
 const parseStatsSection: SectionParser = (section, item, ctx): SectionResult => {
-  if (ctx.isSocketable) return 'not-applicable';
+  if (ctx.isSocketable || ctx.isGem) return 'not-applicable';
   const hasStatsKeywords =
     sectionContains(
       section,
@@ -845,6 +861,16 @@ const parseLimitSection: SectionParser = (section, item): SectionResult => {
   return 'consumed';
 };
 
+/** Parse standalone Tier section (e.g., uncut gems: "Tier: 10"). */
+const parseTierSection: SectionParser = (section, item, ctx): SectionResult => {
+  if (ctx.isMap) return 'not-applicable';
+  if (section.length !== 1) return 'skipped';
+  const match = section[0]!.match(TIER_PATTERN);
+  if (!match) return 'skipped';
+  item.tier = parseInt(match[1]!, 10);
+  return 'consumed';
+};
+
 /** Parse Map/Waystone properties (area level, tier, quantity, rarity, pack size). Greedy. */
 const parseMapPropertiesSection: SectionParser = (section, item, ctx): SectionResult => {
   if (!ctx.isMap) return 'not-applicable';
@@ -948,15 +974,15 @@ const parseGemInfoSection: SectionParser = (section, item, ctx): SectionResult =
     }
     const castTimeMatch = line.match(GEM_CAST_TIME_PATTERN);
     if (castTimeMatch) {
-      gemInfo.castTime = parseFloat(castTimeMatch[1]!);
+      gemInfo.castTime = parseFloat(castTimeMatch[1]!.replace(',', '.'));
     }
     const critMatch = line.match(GEM_CRIT_CHANCE_PATTERN);
     if (critMatch) {
-      gemInfo.critChance = parseFloat(critMatch[1]!);
+      gemInfo.critChance = parseFloat(critMatch[1]!.replace(',', '.'));
     }
     const effectivenessMatch = line.match(GEM_EFFECTIVENESS_PATTERN);
     if (effectivenessMatch) {
-      gemInfo.effectiveness = parseFloat(effectivenessMatch[1]!);
+      gemInfo.effectiveness = parseFloat(effectivenessMatch[1]!.replace(',', '.'));
     }
     const reservationMatch = line.match(GEM_RESERVATION_PATTERN);
     if (reservationMatch) {
@@ -1070,6 +1096,20 @@ const parseGemDescriptionSection: SectionParser = (section, item, ctx): SectionR
   return 'consumed';
 };
 
+/** Recognize a standalone rune/soul core name section (socketed in the item). */
+const parseStandaloneRuneNameSection: SectionParser = (section, item): SectionResult => {
+  if (section.length !== 1) return 'skipped';
+  const line = section[0]!.trim();
+  if (Object.values(MOD_MARKERS).some((regex) => regex.test(line))) return 'skipped';
+  if (!STANDALONE_RUNE_NAME_PATTERN.test(line)) return 'skipped';
+
+  const emptySocket = item.sockets.find((s) => s.rune === null);
+  if (emptySocket) {
+    emptySocket.rune = line;
+  }
+  return 'consumed';
+};
+
 /** Parse Modifier sections — consumes all remaining sections. Greedy, must be last. */
 const parseModifiersSection: SectionParser = (section, item, ctx): SectionResult => {
   for (const line of section) {
@@ -1109,6 +1149,7 @@ const SECTION_PARSERS: ParserEntry[] = [
   { parse: parseFlaskPropertiesSection },
   { parse: parseCharmPropertiesSection },
   { parse: parseLimitSection },
+  { parse: parseTierSection },
   { parse: parseMapPropertiesSection, greedy: true },
   { parse: parseGemInfoSection, greedy: true },
   { parse: parseGemExperienceSection },
@@ -1117,6 +1158,7 @@ const SECTION_PARSERS: ParserEntry[] = [
   { parse: parseSocketableLevelSection },
   { parse: parseSingleItemTypeSection },
   { parse: parseGemDescriptionSection, greedy: true },
+  { parse: parseStandaloneRuneNameSection },
   // Modifier parser MUST be last — consumes all remaining sections
   { parse: parseModifiersSection, greedy: true },
 ];
@@ -1184,6 +1226,7 @@ function parseItemClipboard(text: string): ParsedItem {
     charmProperties: [],
     mapProperties: null,
     limit: null,
+    tier: null,
     flavorText: null,
     flags: { corrupted: false, unidentified: false, mirrored: false, split: false },
     stack: null,
@@ -1198,6 +1241,16 @@ function parseItemClipboard(text: string): ParsedItem {
     item.rarity = header.rarity;
     item.name = header.name;
     item.baseType = header.baseType;
+
+    // Extract inline stats from the header section (Normal items may have stats here)
+    const headerStats = parseStats(sections[0]!, strings);
+    if (headerStats.quality) item.quality = headerStats.quality;
+    if (headerStats.defenses.armour) item.defenses.armour = headerStats.defenses.armour;
+    if (headerStats.defenses.evasion) item.defenses.evasion = headerStats.defenses.evasion;
+    if (headerStats.defenses.energyShield)
+      item.defenses.energyShield = headerStats.defenses.energyShield;
+    if (headerStats.defenses.blockChance)
+      item.defenses.blockChance = headerStats.defenses.blockChance;
   }
 
   // Run section-consumer pipeline on remaining sections
@@ -1255,6 +1308,9 @@ function formatItemAsMarkdown(item: ParsedItem): string {
   }
   if (item.limit !== null) {
     lines.push(`- **Limit:** ${item.limit}`);
+  }
+  if (item.tier !== null) {
+    lines.push(`- **Tier:** ${item.tier}`);
   }
   lines.push('');
 
