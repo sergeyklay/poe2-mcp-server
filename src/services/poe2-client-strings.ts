@@ -377,13 +377,24 @@ const LANGUAGE_PATTERNS: LanguagePattern[] = [
   { code: 'zh-TW', keywords: ['物品種類', '物品類別', '稀有度', '物品等級'] },
   {
     code: 'th',
-    keywords: ['ประเภทไอเท็ม', 'ความหายาก', 'เลเวลไอเท็ม', 'ประเภทไอเทม', 'เลเวลไอเทม'],
+    keywords: [
+      'ประเภทไอเท็ม',
+      'ความหายาก',
+      'เลเวลไอเท็ม',
+      'ประเภทไอเทม',
+      'เลเวลไอเทม',
+      'ชนิดไอเท็ม',
+      'ชนิดไอเทม',
+    ],
   },
   { code: 'ru', keywords: ['Класс предмета', 'Редкость', 'Уровень предмета'] },
   { code: 'de', keywords: ['Gegenstandsklasse', 'Seltenheit', 'Gegenstandsstufe'] },
   { code: 'fr', keywords: ["Classe d'objet", 'Rareté', "Niveau de l'objet"] },
   { code: 'es', keywords: ['Clase de objeto', 'Rareza', 'Nivel de objeto'] },
-  { code: 'pt', keywords: ['Classe do Item', 'Raridade', 'Nível do Item'] },
+  {
+    code: 'pt',
+    keywords: ['Classe do Item', 'Classe do item', 'Raridade', 'Nível do Item', 'Nível do item'],
+  },
   { code: 'en', keywords: ['Item Class', 'Rarity', 'Item Level'] },
 ];
 
@@ -411,7 +422,7 @@ export function detectLanguage(text: string): { code: SupportedLanguage; strings
  * Used to extract granted skills and filter them from explicit mods.
  */
 export const GRANTED_SKILL_PATTERN =
-  /(?:Grants? Skill|Дарует умение|Даёт умение|스킬 부여|賦予技能|赋予技能|Gewährt Fertigkeit|Verleiht Fertigkeit|Octroie|Compétence octroyée|スキルを付与|スキル付与|Otorga habilidad|Concede [Hh]abilidade|มอบสกิล)[:\s]*(.+)/i;
+  /(?:Grants? Skill|Дарует умение|Даёт умение|스킬 부여|賦予技能|赋予技能|Gewährt Fertigkeit|Verleiht Fertigkeit|Octroie la compétence|Compétence octroyée|付与スキル|スキルを付与|スキル付与|Otorga habilidad|Concede [Hh]abilidade|มอบสกิล|ได้รับสกิล)[:\s]*(.+)/i;
 
 /**
  * Pattern to match "Socketed Rune:" lines (metadata, not actual mods).
@@ -428,7 +439,7 @@ export const RELOAD_TIME_PATTERN =
 
 /** Pattern to match sockets lines across all supported languages. */
 export const SOCKETS_PATTERN =
-  /^(?:Sockets|Гн[её]зда|Ячейки|홈|插槽|Fassung(?:en)?|Châsses|ソケット|Engarces|Encaixes|Engastes|รู|ช่องเจียระไน|ช่องใส่)[：:\s]/i;
+  /^(?:Sockets|Гн[её]зда|Ячейки|홈|插槽|Fassung(?:en)?|Châsses|ソケット|Engarces|Encaixes|Engastes|รู|ช่องเจียระไน|ช่องใส่|ช่องเสียบ)[：:\s]/i;
 
 /**
  * Pattern to match level requirements across all supported languages.
@@ -492,7 +503,7 @@ export const FLASK_RECOVERY_PATTERN =
  * Pattern to match flask charges lines.
  */
 export const FLASK_CHARGES_PATTERN =
-  /^(?:Consumes|Currently has|Потребляет|Сейчас осталось|소모|현재|消耗|目前|Verbraucht|Aktuell|Consomme|Possède actuellement|消費する|現在|Consume|Actualmente|Consome|Atualmente|ใช้|ปัจจุบันมี)\s+\d+/i;
+  /^(?:Consumes|Currently has|Потребляет|Расходует|Сейчас осталось|Текущее количество зарядов|Текущее количество|소모|현재|消耗|目前|Verbraucht|Aktuell|Consomme|Possède actuellement|消費する|現在|Consume|Actualmente|Consome|Atualmente|ใช้|ปัจจุบันมี)\W+\d+/i;
 
 /**
  * Pattern to match charm duration lines.
@@ -536,7 +547,7 @@ export const GEM_MANA_MULTIPLIER_PATTERN =
  * Pattern to match gem Cast Time lines.
  */
 export const GEM_CAST_TIME_PATTERN =
-  /^(?:Cast Time|Время применения|시전 시간|施放時間|施放时间|Zauberzeit|Temps d'incantation|詠唱時間|Tiempo de lanzamiento|Tempo de Conjuração|เวลาร่าย)[:\s]+([\d.]+)\s*(?:sec|сек|초|秒|Sek|s|วินาที)/i;
+  /^(?:Cast Time|Время применения|Время сотворения|시전 시간|施放時間|施放时间|Zauberzeit|Temps d'incantation|詠唱時間|Tiempo de lanzamiento|Tempo de Conjuração|เวลาร่าย)[:\s]+([\d.,]+)\s*(?:sec|сек|초|秒|Sek|s|วินาที)/i;
 
 /**
  * Pattern to match gem tags line (comma-separated words without colons).
@@ -547,11 +558,11 @@ export const GEM_TAGS_PATTERN =
 
 /** Pattern to match gem Critical Hit Chance lines. */
 export const GEM_CRIT_CHANCE_PATTERN =
-  /^(?:Critical Hit Chance|Шанс критического удара|크리티컬 확률|暴擊率|爆击率|Kritische Trefferchance|Chances de coup critique|クリティカル率|Probabilidad de golpe crítico|Chance de Acerto Crítico|โอกาสคริติคอล)[:\s]+([\d.]+)%?/i;
+  /^(?:Critical Hit Chance|Шанс критического удара|크리티컬 확률|暴擊率|爆击率|Kritische Trefferchance|Chances de coup critique|クリティカル率|Probabilidad de golpe crítico|Chance de Acerto Crítico|โอกาสคริติคอล)[:\s]+([\d.,]+)%?/i;
 
 /** Pattern to match gem Damage Effectiveness lines. */
 export const GEM_EFFECTIVENESS_PATTERN =
-  /^(?:Damage Effectiveness|Эффективность урона|피해 효ก|傷害效率|伤害效率|Schadenseffektivität|Efficacité des dégâts|ダメージ係数|Efectividad del daño|Eficácia de Dano|ประสิทธิภาพความเสียหาย)[:\s]+([\d.]+)%?/i;
+  /^(?:Damage Effectiveness|Эффективность урона|피해 효걱|傷害效率|伤害效率|Schadenseffektivität|Efficacité des dégâts|ダメージ係数|Efectividad del daño|Eficácia de Dano|ประสิทธิภาพความเสียหาย)[:\s]+([\d.,]+)%?/i;
 
 /** Pattern to match modifier header lines like `{ Prefix Modifier }` (filtered from mods). */
 export const MODIFIER_HEADER_PATTERN = /^\{[^}]+\}$/;
@@ -570,11 +581,11 @@ export const SOCKETABLE_EFFECT_PATTERN =
 
 /** Fallback pattern to match Item Class lines across all languages (used when primary ClientStrings miss a variant). */
 export const ITEM_CLASS_PATTERN =
-  /^(?:Item Class|Класс предмета|아이템 종류|物品種類|物品類別|物品类别|Gegenstandsklasse|Classe d'objet|アイテムクラス|Clase de objeto|Classe (?:do|de) Item|ประเภทไอเท็ม|ประเภทไอเทม|ชนิดไอเทม)[：:]\s*/;
+  /^(?:Item Class|Класс предмета|아이템 종류|物品種類|物品類別|物品类别|Gegenstandsklasse|Classe d'objet|アイテムクラス|Clase de objeto|Classe (?:do|de) [Ii]tem|ประเภทไอเท็ม|ประเภทไอเทม|ชนิดไอเท็ม|ชนิดไอเทม)[：:]\s*/;
 
 /** Fallback pattern to match Item Level lines across all languages. */
 export const ITEM_LEVEL_PATTERN =
-  /^(?:Item Level|Уровень предмета|아이템 레벨|物品等級|物品等级|Gegenstandsstufe|Niveau de l'objet|アイテムレベル|Nivel (?:del? )?objeto|Nível do Item|เลเวลไอเท็ม|เลเวลไอเทม)[：:]\s*(\d+)/;
+  /^(?:Item Level|Уровень предмета|아이템 레벨|物品等級|物品等级|Gegenstandsstufe|Niveau de l'objet|アイテムレベル|Nivel (?:del? )?objeto|Nível do [Ii]tem|เลเวลไอเท็ม|เลเวลไอเทม)[：:]\s*(\d+)/;
 
 /** Pattern to match rune section headers across all supported languages. */
 export const RUNE_SECTION_HEADER_PATTERN =
@@ -590,7 +601,7 @@ export const GEM_EXPERIENCE_PATTERN =
 
 /** Pattern to match map property lines (waystones). */
 export const MAP_TIER_PATTERN =
-  /^(?:Map Tier|Уровень карты|지도 등급|地圖階級|地图阶级|Kartenstufe|Palier de carte|マップティア|Nivel (?:del? )?mapa|Nível do Mapa|ระดับแผนที่)[:\s]+(\d+)/i;
+  /^(?:(?:Map|Waystone) Tier|Уровень (?:карты|камня пути)|지도 등급|地圖階級|地图阶级|Kartenstufe|Palier (?:de carte|de la pierre)|マップティア|Nivel (?:del? )?(?:mapa|piedra)|Nível (?:do Mapa|da Pedra)|ระดับแผนที่)[:\s]+(\d+)/i;
 
 export const MAP_ITEM_QUANTITY_PATTERN =
   /^(?:Item Quantity|Количество предметов|아이템 수량|物品數量|物品数量|Gegenstandsmenge|Quantité d'objets|アイテム数量|Cantidad de objetos|Quantidade de Itens|จำนวนไอเทม)[:\s]+([+-]?\d+)%/i;
@@ -610,7 +621,7 @@ export const CHARM_CHARGES_PATTERN =
  * Handles both abbreviated and full forms (e.g., Russian abbreviated vs full).
  */
 export const CRIT_CHANCE_STAT_PATTERN =
-  /^(?:Critical Strike Chance|Шанс крит(?:\.|ического) удара|치명타 확률|暴擊率|暴击率|Kritische Trefferchance|Chances de coup critique|クリティカル率|Probabilidad de impacto crítico|Chance de Acerto Crítico|โอกาสคริติคอล)[：:]/i;
+  /^(?:Critical (?:Strike|Hit) Chance|Шанс крит(?:\.|ического) удара|치명타 확률|暴擊率|暴击率|Kritische Trefferchance|Chances de coup critique|クリティカル率|Probabilidad de impacto crítico|Chance de Acerto Crítico|โอกาสคริติคอล)[：:]/i;
 
 /**
  * Pattern to match Attacks per Second header stat lines across all languages.
@@ -627,13 +638,15 @@ export const RARITY_ALTERNATES: Record<string, string[]> = {
   Rare: ['Rara', '레어', 'แรร์'],
   Magic: ['Mágica', '매직'],
   Unique: ['Única'],
+  Gem: ['Самоцвет'],
 };
 
 /** Pattern to match gem-class item class strings across all languages. */
-export const ITEM_CLASS_GEM_PATTERN = /gem|寶石|宝石/i;
+export const ITEM_CLASS_GEM_PATTERN = /gem|Камн|寶石|宝石|Gemme|ジェム|젬|Gema|หิน|อัญมณี/i;
 
 /** Pattern to match flask-class item class strings across all languages. */
-export const ITEM_CLASS_FLASK_PATTERN = /flask|药剂|藥劑/i;
+export const ITEM_CLASS_FLASK_PATTERN =
+  /flask|Фляг|药剂|藥劑|Flasche|Flakon|Fiole|Flacon|フラスコ|플라스크|Frasco|ขวด/i;
 
 /** Pattern to match charm-class item class strings across all languages. */
 export const ITEM_CLASS_CHARM_PATTERN = /charm|魔符|護符/i;
@@ -738,15 +751,24 @@ export const ITEM_TYPE_IDENTIFIERS = new Set([
 /** Mod type markers across all supported PoE2 languages. */
 export const MOD_MARKERS = {
   implicit:
-    /\((?:implicit|implizit|неявный|неотъемлемый|implicite|implícito|고유|고정|固定|โดยกำเนิด)\)$/i,
-  rune: /\((?:rune|руна|runa|룬|ルーン|符文|รูน)\)$/i,
+    /\((?:implicit|implizit|неявный|неотъемлемый|скрытый|implicite|implícito|고유|고정|固定|โดยกำเนิด|โดยปริยาย)\)$/i,
+  rune: /\((?:rune|руна|runa|룬|ルーン|符文|รูน|อักขระ)\)$/i,
   enchant:
     /\((?:enchant|Verzauberung|зачарование|enchantement|encantamiento|encantamento|인챈트|エンチャント|附魔|เอ็นแชนท์)\)$/i,
   crafted:
-    /\((?:crafted|hergestellt|создано|forgé|fabricado|criado|제작|クラフト|製作|制作|คราฟต์)\)$/i,
-  fractured: /\(fractured\)$/i,
-  desecrated: /\(desecrated\)$/i,
+    /\((?:crafted|hergestellt|создано|мастерский|forgé|fabriqué|fabricado|criado|제작|クラフト|製作|制作|工藝|工艺|คราฟต์|ประดิษฐ์)\)$/i,
+  fractured:
+    /\((?:fractured|frakturiert|расколотый|fracturé|fracturado|fraturado|분열|フラクチャー|裂痕|แตกหัก)\)$/i,
+  desecrated:
+    /\((?:desecrated|entweiht|осквернённый|profané|profanado|모독|冒涜|褻瀆|亵渎|ลบหลู่)\)$/i,
 } as const;
+
+/**
+ * Pattern to match standalone rune or soul core names in a single-line section.
+ * In real PoE2 clipboard, socketed runes appear as their own section with just the name.
+ */
+export const STANDALONE_RUNE_NAME_PATTERN =
+  /(?:\bRune\b|руна|\u0440\u0443\u043d\u044b|룬|ルーン|符文|\bRuna\b|รูน|\bSoul Core\b|Сердцевина души|Ядро души|영혼 핵|ソウルコア|靈魂核心|灵魂核心|Seelenkern|Noyau d['']\u00e2me|N[úu]cleo de [Aa]lma|แก่นวิญญาณ)/i;
 
 /** Augmented value marker. */
 export const AUGMENTED_MARKER = /\(augmented\)/i;

@@ -330,6 +330,69 @@ Item Level: 5`;
     });
   });
 
+  describe('normal item with inline defensive stats', () => {
+    const normalBody = `Item Class: Body Armours
+Rarity: Normal
+Keth Raiment
+
+Energy Shield: 70
+--------
+Requirements:
+Level: 35
+Int: 67
+--------
+Item Level: 35`;
+
+    it('parses Energy Shield from header section', async () => {
+      const result = await handler({ text: normalBody });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Energy Shield:** 70');
+    });
+
+    it('parses base type', async () => {
+      const result = await handler({ text: normalBody });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('## Keth Raiment');
+    });
+
+    it('parses requirements', async () => {
+      const result = await handler({ text: normalBody });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Level:** 35');
+      expect(output).toContain('**Intelligence:** 67');
+    });
+  });
+
+  describe('normal item with inline armour stat', () => {
+    const normalShield = `Item Class: Shields
+Rarity: Normal
+Twig Shield
+
+Armour: 18
+Block Chance: 25%
+--------
+Requires Level 2
+--------
+Item Level: 3`;
+
+    it('parses Armour from header section', async () => {
+      const result = await handler({ text: normalShield });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Armour:** 18');
+    });
+
+    it('parses Block Chance from header section', async () => {
+      const result = await handler({ text: normalShield });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Block Chance:** 25');
+    });
+  });
+
   describe('gem item', () => {
     const gemText = `Item Class: Skill Gems
 Rarity: Gem
@@ -1252,6 +1315,52 @@ Right click this item to create a Skill Gem by selecting one from a list.`;
         expect(explicitMods.some((m) => m.includes('Tier:'))).toBe(false);
       }
     });
+
+    it('extracts Tier value into Base section', async () => {
+      const result = await handler({ text: uncutGem });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Tier:** 4');
+    });
+  });
+
+  describe('Uncut Support Gem tier extraction', () => {
+    const uncutSupport = `Item Class: Uncut Support Gems
+Rarity: Currency
+Uncut Support Gem
+--------
+Tier: 7
+--------
+Item Level: 52
+--------
+Right click this item to create a Support Gem by selecting one from a list.`;
+
+    it('extracts Tier value', async () => {
+      const result = await handler({ text: uncutSupport });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Tier:** 7');
+    });
+
+    it('filters Tier from explicit mods', async () => {
+      const result = await handler({ text: uncutSupport });
+      const content = result.content[0]!.text;
+      const lines = content.split('\n');
+
+      const explicitIdx = lines.findIndex((l) => l.includes('**Explicit:**'));
+      if (explicitIdx !== -1) {
+        const explicitMods: string[] = [];
+        for (let i = explicitIdx + 1; i < lines.length; i++) {
+          const line = lines[i]!;
+          if (line.startsWith('- ')) {
+            explicitMods.push(line);
+          } else if (line.startsWith('**') || line.startsWith('###')) {
+            break;
+          }
+        }
+        expect(explicitMods.some((m) => m.includes('Tier:'))).toBe(false);
+      }
+    });
   });
 
   describe('Expedition Logbook Area Level parsing', () => {
@@ -1874,6 +1983,34 @@ Area contains two additional Bosses`;
     });
   });
 
+  describe('waystone with Waystone Tier label', () => {
+    const waystoneWithTierLabel = `Item Class: Waystones
+Rarity: Rare
+Precinct
+Waystone (Tier 7)
+--------
+Waystone Tier: 7
+Item Quantity: +40%
+--------
+Item Level: 72
+--------
+Monsters deal 90% extra Damage as Cold`;
+
+    it('parses Waystone Tier label', async () => {
+      const result = await handler({ text: waystoneWithTierLabel });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Map Tier:** 7');
+    });
+
+    it('parses Item Quantity alongside Waystone Tier', async () => {
+      const result = await handler({ text: waystoneWithTierLabel });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Item Quantity:** +40%');
+    });
+  });
+
   describe('charm charge consumption', () => {
     const charmWithCharges = `Item Class: Charms
 Rarity: Magic
@@ -2248,6 +2385,631 @@ Item Level: 70
 
       expect(output).not.toContain('{ Crafted Modifier }');
       expect(output).toContain('+20 to Intelligence');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Regression Tests: Localization & Parsing Fixes
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  describe('Russian skill gem with Самоцвет rarity', () => {
+    const russianGemText = `Класс предмета: Камни умений
+Редкость: Самоцвет
+Похищение сущности
+--------
+Хаос, Снаряд, Чары, Длительность
+Уровень: 11
+Расход маны: 22
+Время сотворения: 1,36 сек
+Шанс критического удара: 9,66%
+--------
+Выпускает снаряд, который накладывает на первого поражённого противника эффект урона хаосом в секунду.
+--------
+Наносит от 29 до 44 Урона хаосом
+Базовая длительность: 3,80 сек`;
+
+    it('detects Gem rarity from Самоцвет', async () => {
+      const result = await handler({ text: russianGemText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Gem Камни умений**');
+    });
+
+    it('parses gem tags', async () => {
+      const result = await handler({ text: russianGemText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Gem Info');
+      expect(output).toContain('**Tags:** Хаос, Снаряд, Чары, Длительность');
+    });
+
+    it('parses gem level and mana cost', async () => {
+      const result = await handler({ text: russianGemText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Level:** 11');
+      expect(output).toContain('**Mana Cost:** 22');
+    });
+
+    it('parses cast time with comma decimal separator', async () => {
+      const result = await handler({ text: russianGemText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Cast Time:** 1.36 sec');
+    });
+
+    it('parses crit chance with comma decimal separator', async () => {
+      const result = await handler({ text: russianGemText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Critical Hit Chance:** 9.66%');
+    });
+
+    it('extracts gem description lines', async () => {
+      const result = await handler({ text: russianGemText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Description');
+      expect(output).toContain('Выпускает снаряд');
+    });
+  });
+
+  describe('Russian modifier tags', () => {
+    it.each([
+      { tag: 'скрытый', expectedType: 'Implicit' },
+      { tag: 'расколотый', expectedType: 'Fractured' },
+      { tag: 'осквернённый', expectedType: 'Desecrated' },
+      { tag: 'мастерский', expectedType: 'Crafted' },
+    ])('classifies ($tag) as $expectedType', async ({ tag, expectedType }) => {
+      const text = `Класс предмета: Кольца
+Редкость: Редкий
+Тестовое кольцо
+Рубиновое кольцо
+--------
+Уровень предмета: 50
+--------
++25% к сопротивлению огню (${tag})
+--------
++30 к максимуму здоровья`;
+
+      const result = await handler({ text });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain(`**${expectedType}:**`);
+      expect(output).toContain('+25% к сопротивлению огню');
+      expect(output).not.toContain(`(${tag})`);
+    });
+  });
+
+  describe('Non-English fractured and desecrated tags', () => {
+    it.each([
+      { lang: 'de', tag: 'frakturiert', keyword: 'Gegenstandsklasse' },
+      { lang: 'fr', tag: 'fracturé', keyword: "Classe d'objet" },
+      { lang: 'ko', tag: '분열', keyword: '아이템 종류' },
+      { lang: 'ja', tag: 'フラクチャー', keyword: 'アイテムクラス' },
+    ])('classifies ($tag) as Fractured for $lang', async ({ tag, keyword }) => {
+      const text = `${keyword}: Rings
+--------
++25 to Life (${tag})`;
+
+      const result = await handler({ text });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Fractured:**');
+      expect(output).not.toContain(`(${tag})`);
+    });
+
+    it.each([
+      { lang: 'de', tag: 'entweiht', keyword: 'Gegenstandsklasse' },
+      { lang: 'fr', tag: 'profané', keyword: "Classe d'objet" },
+      { lang: 'ko', tag: '모독', keyword: '아이템 종류' },
+      { lang: 'ja', tag: '冒涜', keyword: 'アイテムクラス' },
+    ])('classifies ($tag) as Desecrated for $lang', async ({ tag, keyword }) => {
+      const text = `${keyword}: Rings
+--------
++50 to Life (${tag})`;
+
+      const result = await handler({ text });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Desecrated:**');
+      expect(output).not.toContain(`(${tag})`);
+    });
+  });
+
+  describe('Russian flask parsing', () => {
+    const russianFlaskText = `Класс предмета: Фляги жизни
+Редкость: Волшебный
+Большая фляга жизни противодействия кровотечению
+--------
+Восстанавливает 785 жизни за 4,00 сек
+Расходует 20 из 60 зарядов при использовании
+Текущее количество зарядов: 60
+--------
+Уровень предмета: 30
+--------
+Иммунитет к кровотечению на 5 сек`;
+
+    it('detects Magic rarity for Russian flask', async () => {
+      const result = await handler({ text: russianFlaskText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Magic');
+    });
+
+    it('extracts flask recovery as Flask Properties', async () => {
+      const result = await handler({ text: russianFlaskText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Flask Properties');
+      expect(output).toContain('Восстанавливает 785');
+    });
+
+    it('extracts flask charges', async () => {
+      const result = await handler({ text: russianFlaskText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('Расходует 20');
+      expect(output).toContain('Текущее количество зарядов: 60');
+    });
+  });
+
+  describe('Japanese granted skills', () => {
+    const japaneseWandText = `アイテムクラス: ワンド
+レアリティ: レア
+テストワンド
+枯れたワンド
+--------
+アイテムレベル: 41
+--------
+付与スキル: カオスボルト (レベル 11)
+--------
+呪文ダメージ 91% 増加`;
+
+    it('extracts granted skill from 付与スキル keyword', async () => {
+      const result = await handler({ text: japaneseWandText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Granted Skills');
+      expect(output).toContain('カオスボルト (レベル 11)');
+    });
+
+    it('does not leak granted skill into explicit mods', async () => {
+      const result = await handler({ text: japaneseWandText });
+      const output = result.content[0]!.text;
+      const lines = output.split('\n');
+      const explicitIdx = lines.findIndex((l) => l.includes('**Explicit:**'));
+
+      if (explicitIdx !== -1) {
+        const explicitMods: string[] = [];
+        for (let i = explicitIdx + 1; i < lines.length; i++) {
+          const line = lines[i]!;
+          if (line.startsWith('- ')) {
+            explicitMods.push(line);
+          } else if (line.startsWith('**') || line.startsWith('###')) {
+            break;
+          }
+        }
+        expect(explicitMods.some((m) => m.includes('カオスボルト'))).toBe(false);
+      }
+    });
+  });
+
+  describe('Thai granted skills and rune tag', () => {
+    it('extracts granted skill from ได้รับสกิล keyword', async () => {
+      const text = `ประเภทไอเท็ม: คทา
+ความหายาก: หายาก
+คทาทดสอบ
+คทามืด
+--------
+เลเวลไอเท็ม: 41
+--------
+ได้รับสกิล: ลูกธนูเคออส (เลเวล 11)
+--------
+ความเสียหายเวท 91% เพิ่มขึ้น`;
+
+      const result = await handler({ text });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Granted Skills');
+      expect(output).toContain('ลูกธนูเคออส (เลเวล 11)');
+    });
+
+    it('classifies Thai (อักขระ) tag as Rune', async () => {
+      const text = `ประเภทไอเท็ม: คทา
+ความหายาก: หายาก
+คทาทดสอบ
+คทามืด
+--------
+เลเวลไอเท็ม: 35
+--------
+ความเสียหายเวทเพิ่มขึ้น 36% (อักขระ)
+--------
+โล่พลังงานสูงสุด +42`;
+
+      const result = await handler({ text });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Rune:**');
+      expect(output).toContain('ความเสียหายเวทเพิ่มขึ้น 36%');
+      expect(output).not.toContain('(อักขระ)');
+    });
+  });
+
+  describe('Portuguese item class and level with lowercase variant', () => {
+    const portugueseStavesText = `Classe do item: Cajados
+Raridade: Raro
+Maldição da Praga
+Cajado Seco
+--------
+Nível do item: 30
+--------
++25% ao Dano de Magia`;
+
+    it('parses item class from lowercase Classe do item', async () => {
+      const result = await handler({ text: portugueseStavesText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('Cajados');
+      expect(output).toContain('**Rare');
+    });
+
+    it('parses item level from lowercase Nível do item', async () => {
+      const result = await handler({ text: portugueseStavesText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Item Level:** 30');
+    });
+
+    it('detects Portuguese language', async () => {
+      const result = await handler({ text: portugueseStavesText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('*Detected language: pt*');
+    });
+  });
+
+  describe('French granted skill prefix cleanup', () => {
+    it('extracts skill name without prefix leak', async () => {
+      const text = `Classe d'objet: Baguettes
+Rareté: Rare
+Test Baguette
+Baguette Flétrie
+--------
+Niveau de l'objet: 41
+--------
+Octroie la compétence: Projectile du Chaos (Niveau 11)
+--------
+91% d'augmentation des dégâts des sorts`;
+
+      const result = await handler({ text });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Granted Skills');
+      expect(output).toContain('Projectile du Chaos (Niveau 11)');
+      expect(output).not.toContain('la compétence:');
+    });
+  });
+
+  describe('Critical Hit Chance with augmented flag', () => {
+    const spearText = `Item Class: Spears
+Rarity: Rare
+Dragon Lance
+Iron Spear
+--------
+Physical Damage: 25-45
+Critical Hit Chance: 8.70% (augmented)
+Attacks per Second: 1.30
+--------
+Requires Level 30, 50 Str
+--------
+Item Level: 35
+--------
++20% to Physical Damage`;
+
+    it('parses Critical Hit Chance with full precision', async () => {
+      const result = await handler({ text: spearText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Critical Chance:** 8.7% (augmented)');
+    });
+
+    it('preserves augmented flag on crit chance', async () => {
+      const result = await handler({ text: spearText });
+      const output = result.content[0]!.text;
+      const critLine = output.split('\n').find((l) => l.includes('Critical Chance'));
+
+      expect(critLine).toContain('(augmented)');
+    });
+  });
+
+  describe('Elemental Damage with type tags', () => {
+    it('parses multi-element damage with type annotations', async () => {
+      const text = `Item Class: Spears
+Rarity: Rare
+Storm Lance
+Iron Spear
+--------
+Physical Damage: 25-45
+Elemental Damage: 39-62 (fire), 9-14 (cold)
+Critical Hit Chance: 5.00%
+Attacks per Second: 1.30
+--------
+Item Level: 35
+--------
++20% to Physical Damage`;
+
+      const result = await handler({ text });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**fire:** 39-62');
+      expect(output).toContain('**cold:** 9-14');
+    });
+
+    it('parses single-element Elemental Damage', async () => {
+      const text = `Item Class: Wands
+Rarity: Rare
+Fire Wand
+Bone Wand
+--------
+Elemental Damage: 15-30 (fire)
+Critical Hit Chance: 6.00%
+Attacks per Second: 1.40
+--------
+Item Level: 55
+--------
++20% to Spell Damage`;
+
+      const result = await handler({ text });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**fire:** 15-30');
+    });
+  });
+
+  describe('Russian mana flask', () => {
+    const manaFlaskText = `Класс предмета: Фляги маны
+Редкость: Обычный
+Большая фляга маны
+--------
+Восстанавливает 200 маны за 4,00 сек
+Расходует 15 из 45 зарядов при использовании
+Текущее количество зарядов: 45
+--------
+Уровень предмета: 25`;
+
+    it('detects as flask and extracts properties', async () => {
+      const result = await handler({ text: manaFlaskText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Flask Properties');
+      expect(output).toContain('Восстанавливает 200');
+    });
+  });
+
+  describe('Thai alternate keyword ชนิดไอเท็ม for Item Class', () => {
+    const thaiItemText = `ชนิดไอเท็ม: เกราะ
+ความหายาก: แรร์
+ผ้าห่อโรคระบาด
+ชุดคลุมเคธ
+--------
+โล่พลังงาน: 147
+--------
+ข้อกำหนด:
+เลเวล: 35
+ปัญญา: 67
+--------
+ช่องเสียบ: ช ช
+--------
+เลเวลไอเท็ม: 35
+--------
+โล่พลังงานสูงสุด +30
+ต้านทานไฟ +14%
+ต้านทานน้ำแข็ง +10%`;
+
+    it('detects Thai language from ชนิดไอเท็ม keyword', async () => {
+      const result = await handler({ text: thaiItemText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('*Detected language: th*');
+    });
+
+    it('parses Item Class from ชนิดไอเท็ม', async () => {
+      const result = await handler({ text: thaiItemText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('เกราะ');
+    });
+
+    it('parses sockets from ช่องเสียบ keyword', async () => {
+      const result = await handler({ text: thaiItemText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Sockets');
+      expect(output).toContain('ช ช');
+    });
+
+    it('does not classify sockets line as explicit mod', async () => {
+      const result = await handler({ text: thaiItemText });
+      const output = result.content[0]!.text;
+      const lines = output.split('\n');
+      const explicitIdx = lines.findIndex((l) => l.includes('**Explicit:**'));
+
+      if (explicitIdx !== -1) {
+        const explicitSection = lines.slice(explicitIdx, explicitIdx + 10).join('\n');
+        expect(explicitSection).not.toContain('ช่องเสียบ');
+      }
+    });
+
+    it('parses Energy Shield defense stat', async () => {
+      const result = await handler({ text: thaiItemText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Energy Shield:** 147');
+    });
+
+    it('parses Item Level', async () => {
+      const result = await handler({ text: thaiItemText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Item Level:** 35');
+    });
+
+    it('parses requirements', async () => {
+      const result = await handler({ text: thaiItemText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Requirements');
+      expect(output).toContain('**Level:** 35');
+    });
+
+    it('parses explicit modifiers', async () => {
+      const result = await handler({ text: thaiItemText });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Explicit:**');
+      expect(output).toContain('ต้านทานไฟ +14%');
+      expect(output).toContain('ต้านทานน้ำแข็ง +10%');
+    });
+  });
+
+  describe('standalone rune name in section (real clipboard format)', () => {
+    const itemWithSocketedRune = `Item Class: Wands
+Rarity: Rare
+Blight Ruin
+Withered Wand
+--------
+Quality: +20% (augmented)
+--------
+Requires: Level 41, 55 (augmented) Int
+--------
+Sockets: S
+--------
+Item Level: 41
+--------
+25% increased Spell Damage (rune)
+--------
+Iron Rune
+--------
+Grants Skill: Chaos Projectile Level 11
+--------
+91% increased Spell Damage
++84 to maximum Mana`;
+
+    it('does not classify standalone rune name as explicit mod', async () => {
+      const result = await handler({ text: itemWithSocketedRune });
+      const output = result.content[0]!.text;
+      const lines = output.split('\n');
+      const explicitIdx = lines.findIndex((l) => l.includes('**Explicit:**'));
+
+      if (explicitIdx !== -1) {
+        const explicitSection = lines.slice(explicitIdx, explicitIdx + 10).join('\n');
+        expect(explicitSection).not.toContain('Iron Rune');
+      }
+    });
+
+    it('assigns rune name to the socket', async () => {
+      const result = await handler({ text: itemWithSocketedRune });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('S(Iron Rune)');
+    });
+
+    it('still parses rune-tagged mods correctly', async () => {
+      const result = await handler({ text: itemWithSocketedRune });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('**Rune:**');
+      expect(output).toContain('25% increased Spell Damage');
+    });
+
+    it('still parses explicit mods', async () => {
+      const result = await handler({ text: itemWithSocketedRune });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('91% increased Spell Damage');
+      expect(output).toContain('+84 to maximum Mana');
+    });
+
+    it('still extracts granted skills', async () => {
+      const result = await handler({ text: itemWithSocketedRune });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Granted Skills');
+      expect(output).toContain('Chaos Projectile Level 11');
+    });
+  });
+
+  describe('standalone Soul Core name in section', () => {
+    const itemWithSoulCore = `Item Class: Body Armours
+Rarity: Rare
+Dread Shell
+Keth Raiment
+--------
+Energy Shield: 147
+--------
+Sockets: S S
+--------
+Item Level: 50
+--------
+Soul Core of Tacati
+--------
++42 to maximum Energy Shield
+33% increased Energy Shield`;
+
+    it('does not classify Soul Core name as explicit mod', async () => {
+      const result = await handler({ text: itemWithSoulCore });
+      const output = result.content[0]!.text;
+      const lines = output.split('\n');
+      const explicitIdx = lines.findIndex((l) => l.includes('**Explicit:**'));
+
+      if (explicitIdx !== -1) {
+        const explicitSection = lines.slice(explicitIdx, explicitIdx + 10).join('\n');
+        expect(explicitSection).not.toContain('Soul Core of Tacati');
+      }
+    });
+
+    it('assigns soul core name to a socket', async () => {
+      const result = await handler({ text: itemWithSoulCore });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('S(Soul Core of Tacati)');
+    });
+  });
+
+  describe('standalone Russian rune name in section', () => {
+    const russianItemWithRune = `Класс предмета: Жезлы
+Редкость: Редкий
+Чумное проклятие
+Увядший жезл
+--------
+Гнезда: S
+--------
+Уровень предмета: 41
+--------
+25% увеличение урона от чар (руна)
+--------
+Железная руна
+--------
+91% увеличение урона от чар`;
+
+    it('does not classify Железная руна as explicit mod', async () => {
+      const result = await handler({ text: russianItemWithRune });
+      const output = result.content[0]!.text;
+      const lines = output.split('\n');
+      const explicitIdx = lines.findIndex((l) => l.includes('**Explicit:**'));
+
+      if (explicitIdx !== -1) {
+        const explicitSection = lines.slice(explicitIdx, explicitIdx + 10).join('\n');
+        expect(explicitSection).not.toContain('Железная руна');
+      }
+    });
+
+    it('assigns rune name to the socket', async () => {
+      const result = await handler({ text: russianItemWithRune });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('S(Железная руна)');
     });
   });
 });
