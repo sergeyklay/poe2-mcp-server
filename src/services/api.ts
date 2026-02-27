@@ -8,7 +8,7 @@ import type { Element } from 'domhandler';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { inflateSync } from 'node:zlib';
+import { inflateRawSync, inflateSync } from 'node:zlib';
 
 const USER_AGENT = 'poe2-mcp-server/1.0.0 (MCP; Claude Desktop integration)';
 
@@ -1368,32 +1368,74 @@ const DEFAULT_POB2_PATHS: Record<string, string[]> = {
 };
 
 /**
+ * Sanitize a PoB code string that may have been mangled by AI agents or copy-paste.
+ * Strips whitespace, normalises Unicode look-alikes, and URL-decodes common encodings.
+ */
+function sanitizePobCode(code: string): string {
+  let s = code;
+  // Normalise Unicode look-alikes that AI agents may substitute
+  s = s.replace(/\u2013/g, '-'); // en-dash → hyphen
+  s = s.replace(/\u2014/g, '-'); // em-dash → hyphen
+  s = s.replace(/\u2015/g, '-'); // horizontal bar → hyphen
+  s = s.replace(/\u2212/g, '-'); // minus sign → hyphen
+  // URL-decode common percent-encoded base64 characters
+  s = s.replace(/%2B/gi, '+');
+  s = s.replace(/%2F/gi, '/');
+  s = s.replace(/%3D/gi, '=');
+  // Strip ALL whitespace (AI agents may line-wrap or inject spaces)
+  s = s.replace(/\s+/g, '');
+  return s;
+}
+
+/**
  * Decode a PoB code string to XML.
- * Pipeline: URL-safe reversal → Base64 decode → Zlib inflate → UTF-8 string.
+ * Pipeline: sanitize → URL-safe reversal → Base64 decode → Zlib inflate → UTF-8 string.
  * @param code - PoB code string (base64, URL-safe encoded)
  * @returns Decoded XML string
  * @throws Error if decoding fails
  */
 export function decodePobCode(code: string): string {
-  const trimmed = code.trim();
-  const base64 = trimmed.replace(/-/g, '+').replace(/_/g, '/');
+  const sanitized = sanitizePobCode(code);
 
-  let buffer: Buffer;
-  try {
-    buffer = Buffer.from(base64, 'base64');
-  } catch {
-    throw new Error('Invalid PoB code: not valid base64 encoding');
+  if (sanitized.length === 0) {
+    throw new Error('Invalid PoB code: empty input');
   }
+
+  // URL-safe base64 → standard base64
+  const base64 = sanitized.replace(/-/g, '+').replace(/_/g, '/');
+
+  const buffer = Buffer.from(base64, 'base64');
 
   if (buffer.length === 0) {
     throw new Error('Invalid PoB code: empty after base64 decode');
   }
 
+  // Try raw deflate first (PoB2 format), fall back to zlib (PoB1/legacy)
   let decompressed: Buffer;
+
   try {
-    decompressed = inflateSync(buffer);
-  } catch {
-    throw new Error('Invalid PoB code: decompression failed');
+    decompressed = inflateRawSync(buffer);
+  } catch (rawErr) {
+    try {
+      decompressed = inflateSync(buffer);
+    } catch (zlibErr) {
+      // Build diagnostic info for AI agents to reason about the failure
+      const header = buffer.subarray(0, 4).toString('hex');
+      const hasZlibHeader = buffer[0] === 0x78;
+      const rawMsg = rawErr instanceof Error ? rawErr.message : String(rawErr);
+      const zlibMsg = zlibErr instanceof Error ? zlibErr.message : String(zlibErr);
+
+      const diag = [
+        `Invalid PoB code: decompression failed.`,
+        `Input: ${sanitized.length} chars → ${buffer.length} bytes.`,
+        `Header bytes: ${header} (${hasZlibHeader ? 'zlib signature detected' : 'no zlib signature'}).`,
+        `inflateRaw error: ${rawMsg}.`,
+        `inflate error: ${zlibMsg}.`,
+        `Likely cause: the PoB code was truncated or corrupted during copy-paste.`,
+        `Ensure the COMPLETE base64 string from PoB's "Export" is provided without modification.`,
+      ];
+      throw new Error(diag.join(' '));
+    }
   }
 
   return decompressed.toString('utf-8');
@@ -1437,6 +1479,55 @@ export async function fetchPobbinCode(id: string): Promise<string> {
   }
   if (!res.ok) {
     throw new Error(`pobb.in returned HTTP ${res.status}`);
+  }
+
+  return res.text();
+}
+
+/**
+ * Detect if a string is a poe.ninja PoB URL and extract the paste ID.
+ * Supports: poe.ninja/poe2/pob/ID, poe2.ninja/pob/ID, pob2://poeninja/ID
+ * @param input - User input string
+ * @returns Extracted paste ID or null if not a poe.ninja PoB URL
+ */
+export function extractPoeNinjaId(input: string): string | null {
+  const trimmed = input.trim();
+  // pob2://poeninja/ID (PoB2 protocol handler)
+  const protocolMatch = /^pob2:[\\/]+poeninja[\\/]+(.+)$/i.exec(trimmed);
+  if (protocolMatch) return protocolMatch[1]!.replace(/\s+$/, '');
+  // https://poe.ninja/poe2/pob/ID, poe.ninja/poe2/pob/ID, poe2.ninja/pob/ID, etc.
+  const urlMatch = /^(?:https?:\/\/)?poe2?\.ninja\/(?:poe2\/)?pob\/(.+)$/i.exec(trimmed);
+  if (urlMatch) {
+    // Strip trailing /raw if present
+    return urlMatch[1]!.replace(/\/raw$/, '').replace(/\s+$/, '');
+  }
+  return null;
+}
+
+/**
+ * Fetch raw PoB code from poe.ninja.
+ * @param id - Paste ID (e.g., "19f0c")
+ * @returns PoB code string
+ * @throws Error on HTTP failure
+ */
+export async function fetchPoeNinjaCode(id: string): Promise<string> {
+  await ninjaLimiter.wait();
+
+  const url = `https://poe.ninja/poe2/pob/raw/${encodeURIComponent(id)}`;
+  const res = await fetch(url, {
+    headers: { 'User-Agent': USER_AGENT },
+  });
+
+  if (res.status === 404) {
+    throw new Error(
+      'poe.ninja PoB paste not found. Check the URL and ensure the paste still exists.',
+    );
+  }
+  if (res.status === 429) {
+    throw new Error('poe.ninja rate limit exceeded. Try again in a minute.');
+  }
+  if (!res.ok) {
+    throw new Error(`poe.ninja returned HTTP ${res.status}`);
   }
 
   return res.text();

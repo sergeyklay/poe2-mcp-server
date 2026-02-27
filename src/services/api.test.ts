@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { deflateSync } from 'zlib';
+import { deflateRawSync, deflateSync } from 'zlib';
 import {
   fetchJson,
   getNinjaExchangeOverview,
@@ -12,7 +12,9 @@ import {
   parseClientLog,
   decodePobCode,
   extractPobbinId,
+  extractPoeNinjaId,
   fetchPobbinCode,
+  fetchPoeNinjaCode,
   parseItemText,
   parsePobXml,
   comparePobBuilds,
@@ -542,7 +544,17 @@ describe('parseClientLog', () => {
 // ─── PoB2 Service Functions Tests ─────────────────────────────────────
 
 describe('decodePobCode', () => {
-  it('decodes valid URL-safe base64 zlib-compressed XML', () => {
+  it('decodes raw deflate format (PoB2 default)', () => {
+    const xml = '<Build className="Witch" level="1"></Build>';
+    const compressed = deflateRawSync(Buffer.from(xml, 'utf-8'));
+    const base64 = compressed.toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
+
+    const result = decodePobCode(base64);
+
+    expect(result).toBe(xml);
+  });
+
+  it('decodes zlib format (PoB1/legacy)', () => {
     const xml = '<Build className="Witch" level="1"></Build>';
     const compressed = deflateSync(Buffer.from(xml, 'utf-8'));
     const base64 = compressed.toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
@@ -562,14 +574,58 @@ describe('decodePobCode', () => {
     expect(result).toBe(xml);
   });
 
-  it('throws on empty string', () => {
-    expect(() => decodePobCode('')).toThrow('empty after base64 decode');
+  it('handles internal whitespace and line breaks (AI agent line-wrapping)', () => {
+    const xml = '<Build className="Witch" level="1"></Build>';
+    const compressed = deflateRawSync(Buffer.from(xml, 'utf-8'));
+    const base64 = compressed.toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
+    // Simulate AI agent line-wrapping at 76 chars
+    const wrapped = base64.match(/.{1,20}/g)!.join('\n');
+
+    const result = decodePobCode(wrapped);
+
+    expect(result).toBe(xml);
   });
 
-  it('throws on invalid zlib data', () => {
+  it('handles Unicode dash look-alikes from AI agents', () => {
+    const xml = '<Build className="Witch" level="1"></Build>';
+    const compressed = deflateRawSync(Buffer.from(xml, 'utf-8'));
+    const base64 = compressed.toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
+    // Replace some hyphens with en-dash (U+2013) like AI agents sometimes do
+    const mangled = base64.replace(/-/g, '\u2013');
+
+    const result = decodePobCode(mangled);
+
+    expect(result).toBe(xml);
+  });
+
+  it('handles URL-encoded characters (%2B, %2F, %3D)', () => {
+    const xml = '<Build className="Witch" level="1"></Build>';
+    const compressed = deflateSync(Buffer.from(xml, 'utf-8'));
+    const base64 = compressed.toString('base64');
+    // URL-encode the standard base64 characters
+    const urlEncoded = base64.replace(/\+/g, '%2B').replace(/\//g, '%2F').replace(/=/g, '%3D');
+
+    const result = decodePobCode(urlEncoded);
+
+    expect(result).toBe(xml);
+  });
+
+  it('throws on empty string', () => {
+    expect(() => decodePobCode('')).toThrow('empty input');
+  });
+
+  it('throws on whitespace-only string', () => {
+    expect(() => decodePobCode('  \n\t  ')).toThrow('empty input');
+  });
+
+  it('throws on invalid zlib data with diagnostic info', () => {
     const invalidData = Buffer.from('not-zlib-data').toString('base64');
 
     expect(() => decodePobCode(invalidData)).toThrow('decompression failed');
+    expect(() => decodePobCode(invalidData)).toThrow('Header bytes:');
+    expect(() => decodePobCode(invalidData)).toThrow('inflateRaw error:');
+    expect(() => decodePobCode(invalidData)).toThrow('inflate error:');
+    expect(() => decodePobCode(invalidData)).toThrow('truncated or corrupted');
   });
 });
 
@@ -638,6 +694,78 @@ describe('fetchPobbinCode', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
 
     await expect(fetchPobbinCode('test')).rejects.toThrow('HTTP 500');
+  });
+});
+
+describe('extractPoeNinjaId', () => {
+  it.each([
+    { input: 'https://poe.ninja/poe2/pob/19f0c', expected: '19f0c' },
+    { input: 'http://poe.ninja/poe2/pob/19f0c', expected: '19f0c' },
+    { input: 'poe.ninja/poe2/pob/19f0c', expected: '19f0c' },
+    { input: 'POE.NINJA/poe2/pob/19f0c', expected: '19f0c' },
+    { input: 'poe2.ninja/pob/19f0c', expected: '19f0c' },
+    { input: 'https://poe2.ninja/pob/19f0c', expected: '19f0c' },
+    { input: 'poe2.ninja/poe2/pob/19f0c', expected: '19f0c' },
+    { input: 'pob2://poeninja/19f0c', expected: '19f0c' },
+    { input: 'pob2:\\\\poeninja\\19f0c', expected: '19f0c' },
+  ])('extracts "$expected" from "$input"', ({ input, expected }) => {
+    expect(extractPoeNinjaId(input)).toBe(expected);
+  });
+
+  it('strips trailing /raw from paste ID', () => {
+    expect(extractPoeNinjaId('https://poe.ninja/poe2/pob/19f0c/raw')).toBe('19f0c');
+  });
+
+  it('handles whitespace around URL', () => {
+    expect(extractPoeNinjaId('  poe.ninja/poe2/pob/19f0c  ')).toBe('19f0c');
+  });
+
+  it.each([
+    { input: 'pobb.in/abc123', reason: 'pobb.in URL' },
+    { input: 'eNrtVV1v2jAU...', reason: 'PoB code' },
+    { input: 'poe.ninja/poe2/builds', reason: 'builds page, not pob' },
+    { input: '', reason: 'empty string' },
+  ])('returns null for "$input" ($reason)', ({ input }) => {
+    expect(extractPoeNinjaId(input)).toBeNull();
+  });
+});
+
+describe('fetchPoeNinjaCode', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('fetches raw paste content with encoded ID', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve('eNrtVV1v...'),
+      }),
+    );
+
+    const result = await fetchPoeNinjaCode('19f0c');
+
+    expect(fetch).toHaveBeenCalledWith('https://poe.ninja/poe2/pob/raw/19f0c', expect.any(Object));
+    expect(result).toBe('eNrtVV1v...');
+  });
+
+  it('throws specific error on 404', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+
+    await expect(fetchPoeNinjaCode('invalid')).rejects.toThrow('paste not found');
+  });
+
+  it('throws rate limit error on 429', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 429 }));
+
+    await expect(fetchPoeNinjaCode('test')).rejects.toThrow('rate limit exceeded');
+  });
+
+  it('throws generic error on other HTTP errors', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+
+    await expect(fetchPoeNinjaCode('test')).rejects.toThrow('HTTP 500');
   });
 });
 

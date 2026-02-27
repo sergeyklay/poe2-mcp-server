@@ -6,20 +6,20 @@ All data is sourced from **public APIs only**. No API keys, no GGG OAuth registr
 
 ## Tools
 
-| Tool                    | Description                                           | Source                                    |
-| ----------------------- | ----------------------------------------------------- | ----------------------------------------- |
-| `poe2_currency_prices`  | Current exchange rates for all currencies             | [poe.ninja](https://poe.ninja/poe2)       |
-| `poe2_currency_check`   | Look up a specific currency by name                   | [poe.ninja](https://poe.ninja/poe2)       |
-| `poe2_item_price`       | Price check items across exchange categories          | [poe.ninja](https://poe.ninja/poe2)       |
-| `poe2_exchange_top`     | Most valuable items by exchange category              | [poe.ninja](https://poe.ninja/poe2)       |
-| `poe2_wiki_search`      | Search the PoE 2 community wiki                       | [poe2wiki.net](https://www.poe2wiki.net/) |
-| `poe2_wiki_page`        | Retrieve full wiki article content                    | [poe2wiki.net](https://www.poe2wiki.net/) |
-| `poe2_db_lookup`        | Datamined game data: gems, mods, items, translations  | [poe2db.tw](https://poe2db.tw/)           |
-| `poe2_meta_builds`      | Ladder class distribution with percentages and trends | [poe.ninja](https://poe.ninja/poe2)       |
-| `poe2_log_summary`      | Parse local game logs: zones, sessions, player events | Local logs                                |
-| `poe2_pob_decode`       | Decode PoB codes, pobb.in links, or local build files | [pobb.in](https://pobb.in/) / local       |
-| `poe2_pob_local_builds` | List saved PoB2 builds from local filesystem          | Local PoB2                                |
-| `poe2_pob_compare`      | Compare two builds to identify gear/skill differences | Local / remote                            |
+| Tool                    | Description                                           | Source                                                                        |
+| ----------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `poe2_currency_prices`  | Current exchange rates for all currencies             | [poe.ninja](https://poe.ninja/poe2)                                           |
+| `poe2_currency_check`   | Look up a specific currency by name                   | [poe.ninja](https://poe.ninja/poe2)                                           |
+| `poe2_item_price`       | Price check items across exchange categories          | [poe.ninja](https://poe.ninja/poe2)                                           |
+| `poe2_exchange_top`     | Most valuable items by exchange category              | [poe.ninja](https://poe.ninja/poe2)                                           |
+| `poe2_wiki_search`      | Search the PoE 2 community wiki                       | [poe2wiki.net](https://www.poe2wiki.net/)                                     |
+| `poe2_wiki_page`        | Retrieve full wiki article content                    | [poe2wiki.net](https://www.poe2wiki.net/)                                     |
+| `poe2_db_lookup`        | Datamined game data: gems, mods, items, translations  | [poe2db.tw](https://poe2db.tw/)                                               |
+| `poe2_meta_builds`      | Ladder class distribution with percentages and trends | [poe.ninja](https://poe.ninja/poe2)                                           |
+| `poe2_log_summary`      | Parse local game logs: zones, sessions, player events | Local logs                                                                    |
+| `poe2_pob_decode`       | Decode builds from pobb.in, poe.ninja, or local files | [pobb.in](https://pobb.in/) / [poe.ninja](https://poe.ninja/poe2/pob) / local |
+| `poe2_pob_local_builds` | List saved PoB2 builds from local filesystem          | Local PoB2                                                                    |
+| `poe2_pob_compare`      | Compare two builds to identify gear/skill differences | [pobb.in](https://pobb.in/) / [poe.ninja](https://poe.ninja/poe2/pob) / local |
 
 ## Requirements
 
@@ -131,6 +131,7 @@ Once connected, try asking:
 - _"Which classes are most popular on the ladder this league?"_
 - _"Look up Essence Drain on poe2db"_
 - _"Decode this build: pobb.in/abc123"_
+- _"Analyze poe.ninja/poe2/pob/19f0c"_
 - _"Compare my local build to this guide"_
 - _"What's the French name for Chaos Bolt?"_ → uses `poe2_db_lookup` with `lang="fr"`
 
@@ -328,15 +329,16 @@ poe2-mcp-server/
 
 ### Data Sources
 
-| Source                                                   | Auth | Rate Limit         | Update Frequency |
-| -------------------------------------------------------- | ---- | ------------------ | ---------------- |
-| [poe.ninja](https://poe.ninja/poe2) PoE2 Exchange API    | None | ~12 req / 5 min    | ~1 hour          |
-| [poe.ninja](https://poe.ninja/poe2) PoE2 Build Index API | None | ~12 req / 5 min    | ~1 hour          |
-| [poe2wiki.net](https://www.poe2wiki.net/) MediaWiki API  | None | Standard MW limits | Community-driven |
-| [poe2db.tw](https://poe2db.tw/)                          | None | Reasonable use     | Each patch       |
-| [pobb.in](https://pobb.in/) PoB paste service            | None | ~10 req / min      | On-demand        |
-| Local `Client.txt` / `LatestClient.txt`                  | None | N/A (local file)   | Real-time        |
-| Local PoB2 Builds directory                              | None | N/A (local file)   | Real-time        |
+| Source                                                    | Auth | Rate Limit         | Update Frequency |
+| --------------------------------------------------------- | ---- | ------------------ | ---------------- |
+| [poe.ninja](https://poe.ninja/poe2) PoE2 Exchange API     | None | ~12 req / 5 min    | ~1 hour          |
+| [poe.ninja](https://poe.ninja/poe2) PoE2 Build Index API  | None | ~12 req / 5 min    | ~1 hour          |
+| [poe2wiki.net](https://www.poe2wiki.net/) MediaWiki API   | None | Standard MW limits | Community-driven |
+| [poe2db.tw](https://poe2db.tw/)                           | None | Reasonable use     | Each patch       |
+| [pobb.in](https://pobb.in/) PoB paste service             | None | ~10 req / min      | On-demand        |
+| [poe.ninja](https://poe.ninja/poe2/pob) PoB paste hosting | None | ~12 req / 5 min    | On-demand        |
+| Local `Client.txt` / `LatestClient.txt`                   | None | N/A (local file)   | Real-time        |
+| Local PoB2 Builds directory                               | None | N/A (local file)   | Real-time        |
 
 A built-in rate limiter ensures poe.ninja limits are respected automatically.
 
