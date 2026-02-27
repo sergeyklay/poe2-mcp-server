@@ -24,6 +24,7 @@ import { registerWikiTools } from './tools/wiki.js';
 import { registerBuildTools } from './tools/builds.js';
 import { registerLogfileTools } from './tools/logfile.js';
 import { registerPobTools } from './tools/pob.js';
+import { registerItemParserTools } from './tools/item.js';
 
 /**
  * Parse CLI arguments for --poe2-path.
@@ -67,6 +68,7 @@ async function main(): Promise<void> {
   registerBuildTools(server);
   registerLogfileTools(server, { poe2InstallPath: poe2Path });
   registerPobTools(server, { pob2BuildsPath: pob2Path });
+  registerItemParserTools(server);
 
   // Use stdio transport for Claude Desktop integration
   const transport = new StdioServerTransport();
