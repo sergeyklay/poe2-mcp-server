@@ -20,6 +20,16 @@ const EXCHANGE_TYPES = [
   'Breach',
 ] as const;
 
+const UNIQUE_TYPES = [
+  'UniqueArmour',
+  'UniqueWeapon',
+  'UniqueAccessory',
+  'UniqueJewel',
+  'UniqueFlask',
+] as const;
+
+const ALL_ITEM_TYPES = [...EXCHANGE_TYPES, ...UNIQUE_TYPES] as const;
+
 /** Title-case a slug id for display (e.g. "alch" → "Alch"). */
 function displayName(id: string, coreNames: Map<string, string>): string {
   return coreNames.get(id) ?? id.charAt(0).toUpperCase() + id.slice(1);
@@ -33,11 +43,11 @@ export function registerItemTools(server: McpServer): void {
       title: 'PoE2 Item Price Lookup',
       description: `Look up the current market price of an item in Path of Exile 2 from poe.ninja.
 
-Searches by partial name match across exchange categories (Currency, Fragments, Essences, Soul Cores, Idols, Runes, etc.).
+Searches by partial name match across exchange categories (Currency, Fragments, Essences, Soul Cores, Idols, Runes, etc.) and unique item categories (UniqueArmour, UniqueWeapon, UniqueAccessory, UniqueJewel, UniqueFlask).
 
 Args:
   - name (string): Item name or partial name, e.g. "divine", "essence", "rune"
-  - type (string): Exchange category to search. If omitted, searches all categories.
+  - type (string): Category to search. If omitted, searches all categories.
   - league (string): League name (default: "Fate of the Vaal")
 
 Returns: Matching items with chaos-equivalent values and trade volumes.
@@ -45,13 +55,15 @@ Returns: Matching items with chaos-equivalent values and trade volumes.
 Examples:
   - "How much is a Divine Orb?" → name="divine", type="Currency"
   - "Price of essences" → name="essence", type="Essences"
-  - "Find rune prices" → name="rune", type="Runes"`,
+  - "Find rune prices" → name="rune", type="Runes"
+  - "Price of Atziri's Disdain" → name="Atziri's Disdain", type="UniqueAccessory"
+  - "How much is Waveshaper?" → name="Waveshaper", type="UniqueArmour"`,
       inputSchema: {
         name: z.string().min(1).describe('Item name or partial match'),
         type: z
-          .enum(EXCHANGE_TYPES)
+          .enum(ALL_ITEM_TYPES)
           .optional()
-          .describe('Exchange category to search. If omitted, searches all categories.'),
+          .describe('Category to search. If omitted, searches all categories.'),
         league: z.string().default(DEFAULT_LEAGUE).describe('PoE2 league name'),
       },
       annotations: {
@@ -63,7 +75,7 @@ Examples:
     },
     async ({ name, type, league }) => {
       try {
-        const typesToSearch = type ? [type] : [...EXCHANGE_TYPES];
+        const typesToSearch = type ? [type] : [...ALL_ITEM_TYPES];
         const query = name.toLowerCase();
         const results: Array<{
           name: string;
@@ -108,7 +120,7 @@ Examples:
             content: [
               {
                 type: 'text',
-                text: `No items found matching "${name}" in ${league}.\n\nTip: Try a shorter name. Available categories: ${EXCHANGE_TYPES.join(', ')}`,
+                text: `No items found matching "${name}" in ${league}.\n\nTip: Try a shorter name. Available categories: ${ALL_ITEM_TYPES.join(', ')}`,
               },
             ],
           };
