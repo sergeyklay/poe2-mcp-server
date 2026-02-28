@@ -65,10 +65,7 @@ import {
   type ClientStrings,
   type SupportedLanguage,
 } from '../services/strings.js';
-import {
-  resolveEnglishBaseType,
-  type Poe2dbLang,
-} from '../services/api.js';
+import { resolveEnglishBaseType, type Poe2dbLang } from '../services/api.js';
 import { lookupUniquePriceFromScout } from '../services/poe2scout.js';
 import {
   lookupBaseItem,
@@ -512,7 +509,10 @@ function formatEnrichmentSection(enrichment: ItemEnrichment, item: ParsedItem): 
   }
 
   // Open prefix/suffix slots
-  if (enrichment.modTiers.length > 0 && (enrichment.maxPrefixes > 0 || enrichment.maxSuffixes > 0)) {
+  if (
+    enrichment.modTiers.length > 0 &&
+    (enrichment.maxPrefixes > 0 || enrichment.maxSuffixes > 0)
+  ) {
     const openP = enrichment.maxPrefixes - enrichment.prefixCount;
     const openS = enrichment.maxSuffixes - enrichment.suffixCount;
     lines.push('');
