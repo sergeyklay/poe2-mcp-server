@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
-vi.mock('../services/api.js', () => ({
-  getNinjaExchangeOverview: vi.fn(),
+vi.mock('../services/api.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/api.js')>();
+  return { ...actual, getNinjaExchangeOverview: vi.fn() };
+});
+
+vi.mock('../services/poe2scout.js', () => ({
+  searchPoe2scoutUniques: vi.fn(),
 }));
 
 import { getNinjaExchangeOverview } from '../services/api.js';
+import { searchPoe2scoutUniques } from '../services/poe2scout.js';
 import { registerItemTools } from './items.js';
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
@@ -107,16 +113,17 @@ describe('poe2_item_price', () => {
     expect(result.content[0]!.text).toContain('No items found');
   });
 
-  it('finds unique items by partial name match', async () => {
-    vi.mocked(getNinjaExchangeOverview).mockResolvedValue(
-      mockExchangeResponse([
-        {
-          id: 'kaoms-heart',
-          primaryValue: 3.5,
-          volumePrimaryValue: 80,
-        },
-      ]),
-    );
+  it('finds unique items via poe2scout by partial name match', async () => {
+    vi.mocked(searchPoe2scoutUniques).mockResolvedValue([
+      {
+        name: "Kaom's Heart",
+        baseType: 'Glorious Plate',
+        chaos: 500,
+        volume: 80,
+        iconUrl: null,
+        category: 'armour',
+      },
+    ]);
 
     const result = await handler({
       name: 'kaom',
@@ -124,55 +131,40 @@ describe('poe2_item_price', () => {
       league: 'Standard',
     });
 
+    expect(result.content[0]!.text).toContain("Kaom's Heart");
     expect(result.content[0]!.text).not.toContain('No items found');
+    expect(searchPoe2scoutUniques).toHaveBeenCalledWith('armour', 'kaom', 'Standard');
   });
 
-  it('searches all types including unique types when type is omitted', async () => {
+  it('searches exchange types via poe.ninja and unique types via poe2scout when type is omitted', async () => {
     vi.mocked(getNinjaExchangeOverview).mockResolvedValue(mockExchangeResponse([]));
+    vi.mocked(searchPoe2scoutUniques).mockResolvedValue([]);
 
     await handler({ name: 'test', league: 'Standard' });
 
-    const calledTypes = vi.mocked(getNinjaExchangeOverview).mock.calls.map((c) => c[1]);
-    expect(calledTypes).toContain('Currency');
-    expect(calledTypes).toContain('UniqueArmour');
-    expect(calledTypes).toContain('UniqueWeapon');
-    expect(calledTypes).toContain('UniqueAccessory');
-    expect(calledTypes).toContain('UniqueJewel');
-    expect(calledTypes).toContain('UniqueFlask');
+    const ninjaCalledTypes = vi.mocked(getNinjaExchangeOverview).mock.calls.map((c) => c[1]);
+    expect(ninjaCalledTypes).toContain('Currency');
+    expect(ninjaCalledTypes).not.toContain('UniqueArmour');
+
+    const scoutCalledCategories = vi.mocked(searchPoe2scoutUniques).mock.calls.map((c) => c[0]);
+    expect(scoutCalledCategories).toContain('armour');
+    expect(scoutCalledCategories).toContain('weapon');
+    expect(scoutCalledCategories).toContain('accessory');
+    expect(scoutCalledCategories).toContain('jewel');
+    expect(scoutCalledCategories).toContain('flask');
   });
 
-  it('returns unique item with chaos value in results', async () => {
-    vi.mocked(getNinjaExchangeOverview).mockImplementation(async (_league, type) => {
-      if (type === 'UniqueAccessory') {
-        return {
-          core: {
-            items: [
-              {
-                id: 'atziris-disdain',
-                name: "Atziri's Disdain",
-                image: '',
-                category: 'UniqueAccessory',
-                detailsId: 'atziris-disdain',
-              },
-            ],
-            rates: { chaos: 27 },
-            primary: 'divine',
-            secondary: 'chaos',
-          },
-          lines: [
-            {
-              id: 'atziris-disdain',
-              primaryValue: 2,
-              volumePrimaryValue: 50,
-              maxVolumeCurrency: 'chaos',
-              maxVolumeRate: 27,
-              sparkline: { totalChange: 0, data: [] },
-            },
-          ],
-        };
-      }
-      return mockExchangeResponse([]);
-    });
+  it('returns unique item with chaos value in results via poe2scout', async () => {
+    vi.mocked(searchPoe2scoutUniques).mockResolvedValue([
+      {
+        name: "Atziri's Disdain",
+        baseType: 'Onyx Amulet',
+        chaos: 54,
+        volume: 50,
+        iconUrl: null,
+        category: 'accessory',
+      },
+    ]);
 
     const result = await handler({
       name: "Atziri's Disdain",
@@ -182,10 +174,11 @@ describe('poe2_item_price', () => {
 
     expect(result.content[0]!.text).toContain("Atziri's Disdain");
     expect(result.content[0]!.text).toContain('[UniqueAccessory]');
+    expect(result.content[0]!.text).toContain('54.0');
   });
 
   it('includes all item types in no-results message', async () => {
-    vi.mocked(getNinjaExchangeOverview).mockResolvedValue(mockExchangeResponse([]));
+    vi.mocked(searchPoe2scoutUniques).mockResolvedValue([]);
 
     const result = await handler({
       name: 'nonexistent_xyz',
@@ -195,6 +188,19 @@ describe('poe2_item_price', () => {
 
     expect(result.content[0]!.text).toContain('UniqueArmour');
     expect(result.content[0]!.text).toContain('UniqueFlask');
+  });
+
+  it('silently skips poe2scout errors for unique types', async () => {
+    vi.mocked(searchPoe2scoutUniques).mockRejectedValue(new Error('Network error'));
+
+    const result = await handler({
+      name: 'test',
+      type: 'UniqueWeapon',
+      league: 'Standard',
+    });
+
+    expect(result.content[0]!.text).toContain('No items found');
+    expect(result.isError).toBeUndefined();
   });
 });
 

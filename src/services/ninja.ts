@@ -1,5 +1,10 @@
 import { RateLimiter, fetchJson } from './http.js';
 
+/** Title-case a poe.ninja slug id for display (e.g. "alch" → "Alch"). */
+export function displayNinjaName(id: string, coreNames: Map<string, string>): string {
+  return coreNames.get(id) ?? id.charAt(0).toUpperCase() + id.slice(1);
+}
+
 // ─── poe.ninja PoE2 Exchange API ──────────────────────────────────────
 
 // poe.ninja: 12 req / 5 min

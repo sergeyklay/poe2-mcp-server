@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
-vi.mock('../services/api.js', () => ({
-  getNinjaExchangeOverview: vi.fn(),
-}));
+vi.mock('../services/api.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/api.js')>();
+  return { ...actual, getNinjaExchangeOverview: vi.fn() };
+});
 
 import { getNinjaExchangeOverview } from '../services/api.js';
 import { registerCurrencyTools } from './currency.js';

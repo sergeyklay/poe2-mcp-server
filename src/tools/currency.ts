@@ -1,18 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { getNinjaExchangeOverview } from '../services/api.js';
-
-const DEFAULT_LEAGUE = 'Fate of the Vaal';
-
-const LeagueSchema = z
-  .string()
-  .default(DEFAULT_LEAGUE)
-  .describe('PoE2 league name, e.g. "Fate of the Vaal" or "Standard"');
-
-/** Title-case a slug id for display (e.g. "alch" → "Alch"). */
-function displayName(id: string, coreNames: Map<string, string>): string {
-  return coreNames.get(id) ?? id.charAt(0).toUpperCase() + id.slice(1);
-}
+import { getNinjaExchangeOverview, displayNinjaName } from '../services/api.js';
+import { DEFAULT_LEAGUE, LeagueSchema } from '../constants.js';
 
 export function registerCurrencyTools(server: McpServer): void {
   // ── poe2_currency_prices ──────────────────────────────────────────
@@ -26,7 +15,7 @@ Returns prices of all currencies with chaos-equivalent values computed from exch
 Data refreshes approximately every hour on poe.ninja.
 
 Args:
-  - league (string): League name (default: "Fate of the Vaal")
+  - league (string): League name (default: "${DEFAULT_LEAGUE}")
 
 Returns: List of currencies with their exchange values and trade volumes.
 
@@ -65,7 +54,7 @@ Examples:
         });
 
         for (const line of sorted) {
-          const name = displayName(line.id, coreNames);
+          const name = displayNinjaName(line.id, coreNames);
           const chaosValue = (line.primaryValue * chaosRate).toFixed(2);
           const volume = line.volumePrimaryValue ?? 0;
           lines.push(`- **${name}**: ${chaosValue} chaos (volume: ${volume})`);
@@ -81,7 +70,7 @@ Examples:
           content: [
             {
               type: 'text',
-              text: `Error fetching currency prices for league "${league}": ${msg}\n\nAvailable PoE2 leagues: "Fate of the Vaal", "Standard". League names are case-sensitive.`,
+              text: `Error fetching currency prices for league "${league}": ${msg}\n\nAvailable PoE2 leagues: "${DEFAULT_LEAGUE}", "Standard". League names are case-sensitive.`,
             },
           ],
         };
@@ -100,7 +89,7 @@ Searches by partial name match (case-insensitive) against currency ids and refer
 
 Args:
   - name (string): Currency name or partial name, e.g. "exalted", "divine", "regal"
-  - league (string): League name (default: "Fate of the Vaal")
+  - league (string): League name (default: "${DEFAULT_LEAGUE}")
 
 Returns: Matched currency with its chaos-equivalent value and trade volume.
 
@@ -148,7 +137,7 @@ Examples:
           if (matchesQuery) {
             matches.push({
               id: line.id,
-              name: displayName(line.id, coreNames),
+              name: displayNinjaName(line.id, coreNames),
               chaosValue: line.primaryValue * chaosRate,
               volume: line.volumePrimaryValue ?? 0,
             });

@@ -5,8 +5,7 @@ import {
   type BuildClassStatistic,
   type BuildLeagueEntry,
 } from '../services/api.js';
-
-const DEFAULT_LEAGUE = 'Fate of the Vaal';
+import { DEFAULT_LEAGUE, LeagueSchema } from '../constants.js';
 
 /** Format a trend indicator for class distribution. */
 function trendLabel(trend: number): string {
@@ -26,7 +25,7 @@ export function registerBuildTools(server: McpServer): void {
 Shows the most popular classes with their percentage share and trend direction among indexed ladder characters.
 
 Args:
-  - league (string): League name (default: "Fate of the Vaal")
+  - league (string): League name (default: "${DEFAULT_LEAGUE}")
   - class_name (string): Optional — filter by class, e.g. "Witch", "Lich", "Sorceress"
 
 Returns: Class distribution with percentages and trend indicators.
@@ -35,7 +34,7 @@ Examples:
   - "What's the current meta?" → call with defaults
   - "Most popular Witch builds?" → class_name="Witch"`,
       inputSchema: {
-        league: z.string().default(DEFAULT_LEAGUE).describe('PoE2 league name'),
+        league: LeagueSchema,
         class_name: z
           .string()
           .optional()
