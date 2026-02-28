@@ -14,6 +14,7 @@ vi.mock('./http.js', () => {
 import { fetchJson } from './http.js';
 import {
   lookupBaseItem,
+  lookupBaseItemByClass,
   matchSingleModTier,
   matchAllModTiers,
   resetRepoeCache,
@@ -230,6 +231,77 @@ describe('lookupBaseItem', () => {
     const callsAfterSecond = vi.mocked(fetchJson).mock.calls.length;
 
     expect(callsAfterSecond).toBe(callsAfterFirst);
+  });
+
+  it('strips Magic affix names to find base item', async () => {
+    mockBaseItemsJson(HELMET_BASE_ITEM);
+
+    const result = await lookupBaseItem('Gold Circlet of the Polar Bear');
+
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('Gold Circlet');
+    expect(result!.baseEs).toBe(58);
+  });
+
+  it('strips prefix names from Magic items', async () => {
+    mockBaseItemsJson(WAND_BASE_ITEM);
+
+    const result = await lookupBaseItem("Runic Withered Wand");
+
+    expect(result).toBeNull();
+  });
+
+  it('handles two-word base names with suffix', async () => {
+    mockBaseItemsJson(HELMET_BASE_ITEM);
+
+    const result = await lookupBaseItem('Gold Circlet of Skill');
+
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('Gold Circlet');
+  });
+});
+
+describe('lookupBaseItemByClass', () => {
+  it('finds base item by class and closest required level', async () => {
+    mockBaseItemsJson({
+      ...HELMET_BASE_ITEM,
+      'Metadata/Items/Armours/Helmets/Helmet1': {
+        domain: 'item',
+        drop_level: 1,
+        item_class: 'Helmet',
+        name: 'Leather Hood',
+        tags: ['int_armour', 'helmet', 'armour', 'default'],
+        properties: {
+          armour: null, energy_shield: { min: 10, max: 10 }, evasion: null,
+          block: null, attack_time: null, critical_strike_chance: null,
+          physical_damage_min: null, physical_damage_max: null, range: null,
+          movement_speed: null,
+        },
+        requirements: { dexterity: 0, intelligence: 10, level: 1, strength: 0 },
+        release_state: 'released',
+      },
+    });
+
+    const result = await lookupBaseItemByClass('Helmet', 35);
+
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('Gold Circlet');
+  });
+
+  it('returns null for unknown item class', async () => {
+    mockBaseItemsJson(HELMET_BASE_ITEM);
+
+    const result = await lookupBaseItemByClass('Unknown Class', 35);
+
+    expect(result).toBeNull();
+  });
+
+  it('returns first candidate when reqLevel is null', async () => {
+    mockBaseItemsJson(HELMET_BASE_ITEM);
+
+    const result = await lookupBaseItemByClass('Helmet', null);
+
+    expect(result).not.toBeNull();
   });
 });
 

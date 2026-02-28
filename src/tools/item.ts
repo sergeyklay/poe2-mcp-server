@@ -72,6 +72,7 @@ import {
 import { lookupUniquePriceFromScout } from '../services/poe2scout.js';
 import {
   lookupBaseItem,
+  lookupBaseItemByClass,
   matchAllModTiers,
   type ModTierResult,
   type BaseItemStats,
@@ -282,6 +283,39 @@ const ItemClipboardSchema = z.object({
 // Enrichment Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Map a localized item class to a RePoE `item_class` value (e.g., "Helmets" slug → "Helmet"). */
+function mapItemClassToRepoeClass(itemClass: string): string | null {
+  const slug = mapItemClassToEnglishSlug(itemClass);
+  if (!slug) return null;
+
+  const slugToRepoe: Record<string, string> = {
+    Body_Armours: 'Body Armour',
+    Helmets: 'Helmet',
+    Gloves: 'Gloves',
+    Boots: 'Boots',
+    Shields: 'Shield',
+    Quivers: 'Quiver',
+    Foci: 'Focus',
+    Wands: 'Wand',
+    Staves: 'Staff',
+    Bows: 'Bow',
+    Crossbows: 'Crossbow',
+    Maces: 'One Hand Mace',
+    Swords: 'One Hand Sword',
+    Axes: 'One Hand Axe',
+    Claws: 'Claw',
+    Daggers: 'Dagger',
+    Flails: 'Flail',
+    Spears: 'Spear',
+    Sceptres: 'Sceptre',
+    Rings: 'Ring',
+    Amulets: 'Amulet',
+    Belts: 'Belt',
+  };
+
+  return slugToRepoe[slug] ?? null;
+}
+
 /** Whether the item class is eligible for base type + mod tier enrichment. */
 function isEquipment(itemClass: string): boolean {
   return (
@@ -366,7 +400,16 @@ async function enrichItem(item: ParsedItem, league: string): Promise<ItemEnrichm
       const { englishName, englishBaseType } = await resolveBaseTypeName(item);
       enrichment.englishBaseType = englishBaseType;
 
-      const baseItem = await lookupBaseItem(englishName);
+      let baseItem = await lookupBaseItem(englishName);
+
+      // Localization-agnostic fallback: match by item class + required level
+      if (!baseItem && item.detectedLanguage !== 'en') {
+        const repoeClass = mapItemClassToRepoeClass(item.itemClass);
+        if (repoeClass) {
+          baseItem = await lookupBaseItemByClass(repoeClass, item.requirements.level);
+        }
+      }
+
       if (baseItem) {
         enrichment.baseItem = baseItem;
 

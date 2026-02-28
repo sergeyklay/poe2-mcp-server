@@ -11,12 +11,13 @@ vi.mock('../services/poe2scout.js', () => ({
 
 vi.mock('../services/repoe.js', () => ({
   lookupBaseItem: vi.fn(),
+  lookupBaseItemByClass: vi.fn(),
   matchAllModTiers: vi.fn(),
 }));
 
 import { resolveEnglishBaseType } from '../services/api.js';
 import { lookupUniquePriceFromScout } from '../services/poe2scout.js';
-import { lookupBaseItem, matchAllModTiers } from '../services/repoe.js';
+import { lookupBaseItem, lookupBaseItemByClass, matchAllModTiers } from '../services/repoe.js';
 import { registerItemParserTools } from './item.js';
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
@@ -3557,6 +3558,34 @@ Item Level: 38
         await handler({ text: russianBodyArmour, enrich: true });
 
         expect(lookupBaseItem).toHaveBeenCalledWith('Keth Raiment');
+      });
+
+      it('falls back to lookupBaseItemByClass when translation and name lookup both fail', async () => {
+        vi.mocked(resolveEnglishBaseType).mockResolvedValue(null);
+        vi.mocked(lookupBaseItem).mockResolvedValue(null);
+        vi.mocked(lookupBaseItemByClass).mockResolvedValue({
+          name: 'Keth Raiment',
+          itemClass: 'Body Armour',
+          tags: ['int_armour', 'body_armour', 'armour', 'default'],
+          baseEs: 70,
+          baseArmour: null,
+          baseEvasion: null,
+          basePhysDamageMin: null,
+          basePhysDamageMax: null,
+          baseCritChance: null,
+          baseAttackTime: null,
+          reqLevel: 28,
+          reqStr: null,
+          reqDex: null,
+          reqInt: 47,
+        });
+
+        const result = await handler({ text: russianBodyArmour, enrich: true });
+        const output = result.content[0]!.text;
+
+        expect(output).toContain('### Enrichment');
+        expect(output).toContain('Base ES: 70');
+        expect(lookupBaseItemByClass).toHaveBeenCalledWith('Body Armour', 35);
       });
     });
   });

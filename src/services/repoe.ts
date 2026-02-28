@@ -285,6 +285,8 @@ async function ensureBaseItemIndex(): Promise<BaseItemIndex> {
 
 /**
  * Look up base item stats by name.
+ * For Magic items whose base type includes affix names (e.g., "Gold Circlet of the Polar Bear"),
+ * progressively strips trailing words until a match is found ("Gold Circlet").
  *
  * @param baseTypeName - Display name of the base type (e.g., "Withered Wand", "Gold Circlet")
  * @returns Base item stats or null if not found
@@ -292,10 +294,67 @@ async function ensureBaseItemIndex(): Promise<BaseItemIndex> {
 export async function lookupBaseItem(baseTypeName: string): Promise<BaseItemStats | null> {
   try {
     const index = await ensureBaseItemIndex();
-    return index.get(baseTypeName.toLowerCase()) ?? null;
+
+    // Exact match first
+    const exact = index.get(baseTypeName.toLowerCase());
+    if (exact) return exact;
+
+    // Progressive strip: remove trailing words to handle Magic item affix names
+    // e.g., "Gold Circlet of the Polar Bear" → "Gold Circlet of the Polar" → ... → "Gold Circlet"
+    const words = baseTypeName.split(/\s+/);
+    for (let len = words.length - 1; len >= 2; len--) {
+      const candidate = words.slice(0, len).join(' ').toLowerCase();
+      const match = index.get(candidate);
+      if (match) return match;
+    }
+
+    return null;
   } catch (err) {
     console.error(
       'RePoE: base item lookup failed:',
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+}
+
+/**
+ * Find a base item by item class and required level (localization-agnostic fallback).
+ * When the base type name is in a non-English language and translation fails,
+ * this heuristic matches by class and closest drop level.
+ *
+ * @param itemClass - RePoE item class (e.g., "Helmet", "Body Armour", "Wand")
+ * @param reqLevel - Required level of the item (from parsed requirements)
+ * @returns Best-matching base item or null
+ */
+export async function lookupBaseItemByClass(
+  itemClass: string,
+  reqLevel: number | null,
+): Promise<BaseItemStats | null> {
+  try {
+    const index = await ensureBaseItemIndex();
+
+    const candidates: BaseItemStats[] = [];
+    for (const item of index.values()) {
+      if (item.itemClass.toLowerCase() === itemClass.toLowerCase()) {
+        candidates.push(item);
+      }
+    }
+    if (candidates.length === 0) return null;
+
+    if (reqLevel === null) return candidates[0]!;
+
+    // Find the candidate whose reqLevel is closest to the target
+    candidates.sort((a, b) => {
+      const diffA = Math.abs((a.reqLevel ?? 0) - reqLevel);
+      const diffB = Math.abs((b.reqLevel ?? 0) - reqLevel);
+      return diffA - diffB;
+    });
+
+    return candidates[0]!;
+  } catch (err) {
+    console.error(
+      'RePoE: base item class lookup failed:',
       err instanceof Error ? err.message : String(err),
     );
     return null;
