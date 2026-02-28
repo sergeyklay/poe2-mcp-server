@@ -104,6 +104,20 @@ To specify a custom PoB2 builds directory (for `poe2_pob_*` tools), add `--pob2-
 ]
 ```
 
+#### Custom Default League
+
+Override the default league used by all price/economy tools via `--league`:
+
+```json
+"args": [
+  "C:\\path\\to\\poe2-mcp-server\\dist\\index.js",
+  "--league",
+  "Standard"
+]
+```
+
+When not specified, defaults to the current challenge league (`Dawn of the Hunt`). The AI agent can still pass any league name per-request — this only changes the fallback.
+
 ### Claude Code
 
 ```bash
@@ -114,6 +128,12 @@ With custom game path:
 
 ```bash
 claude mcp add poe2 node /path/to/poe2-mcp-server/dist/index.js --poe2-path "/path/to/Path of Exile 2"
+```
+
+With custom league:
+
+```bash
+claude mcp add poe2 node /path/to/poe2-mcp-server/dist/index.js --league "Standard"
 ```
 
 ### MCP Inspector
@@ -320,7 +340,7 @@ If the player uses a non-English game client:
 
 ## Supported Leagues
 
-Default league: **Dawn of the Hunt**. Any active PoE2 league can be passed by name. Update `DEFAULT_LEAGUE` in `src/constants.ts` each league rotation.
+Default league: **Dawn of the Hunt**. Configurable via `--league` CLI argument or by editing `FALLBACK_LEAGUE` in `src/constants.ts`. The AI agent can override per-request.
 
 | League           | Name (case-sensitive)                     |
 | ---------------- | ----------------------------------------- |
@@ -336,7 +356,7 @@ Default league: **Dawn of the Hunt**. Any active PoE2 league can be passed by na
 poe2-mcp-server/
 ├── src/
 │   ├── index.ts                    # Entry point: server init, stdio transport
-│   ├── constants.ts                # DEFAULT_LEAGUE, LeagueSchema — shared project constants
+│   ├── constants.ts                # Shared project constants
 │   ├── services/
 │   │   ├── api.ts                  # Barrel re-export for all service modules
 │   │   ├── http.ts                 # HTTP client, RateLimiter, User-Agent
@@ -364,18 +384,18 @@ poe2-mcp-server/
 
 ### Data Sources
 
-| Source                                                    | Auth | Rate Limit         | Update Frequency |
-| --------------------------------------------------------- | ---- | ------------------ | ---------------- |
-| [poe.ninja](https://poe.ninja/poe2) PoE2 Exchange API     | None | ~12 req / 5 min    | ~1 hour          |
-| [poe.ninja](https://poe.ninja/poe2) PoE2 Build Index API  | None | ~12 req / 5 min    | ~1 hour          |
-| [poe2scout.com](https://poe2scout.com/) Unique Item API   | None | ~10 req / min      | ~1 hour          |
-| [poe2wiki.net](https://www.poe2wiki.net/) MediaWiki API   | None | Standard MW limits | Community-driven |
+| Source                                                     | Auth | Rate Limit         | Update Frequency |
+| ---------------------------------------------------------- | ---- | ------------------ | ---------------- |
+| [poe.ninja](https://poe.ninja/poe2) PoE2 Exchange API      | None | ~12 req / 5 min    | ~1 hour          |
+| [poe.ninja](https://poe.ninja/poe2) PoE2 Build Index API   | None | ~12 req / 5 min    | ~1 hour          |
+| [poe2scout.com](https://poe2scout.com/) Unique Item API    | None | ~10 req / min      | ~1 hour          |
+| [poe2wiki.net](https://www.poe2wiki.net/) MediaWiki API    | None | Standard MW limits | Community-driven |
 | [RePoE](https://repoe-fork.github.io/poe2/) Datamined JSON | None | ~5 req / min       | Each patch       |
-| [poe2db.tw](https://poe2db.tw/)                           | None | ~15 req / min      | Each patch       |
-| [pobb.in](https://pobb.in/) PoB paste service             | None | ~10 req / min      | On-demand        |
-| [poe.ninja](https://poe.ninja/poe2/pob) PoB paste hosting | None | ~12 req / 5 min    | On-demand        |
-| Local `Client.txt` / `LatestClient.txt`                   | None | N/A (local file)   | Real-time        |
-| Local PoB2 Builds directory                               | None | N/A (local file)   | Real-time        |
+| [poe2db.tw](https://poe2db.tw/)                            | None | ~15 req / min      | Each patch       |
+| [pobb.in](https://pobb.in/) PoB paste service              | None | ~10 req / min      | On-demand        |
+| [poe.ninja](https://poe.ninja/poe2/pob) PoB paste hosting  | None | ~12 req / 5 min    | On-demand        |
+| Local `Client.txt` / `LatestClient.txt`                    | None | N/A (local file)   | Real-time        |
+| Local PoB2 Builds directory                                | None | N/A (local file)   | Real-time        |
 
 Built-in rate limiters ensure all API limits are respected automatically.
 

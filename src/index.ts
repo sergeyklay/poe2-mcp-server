@@ -26,35 +26,16 @@ import { registerLogfileTools } from './tools/logfile.js';
 import { registerPobTools } from './tools/pob.js';
 import { registerItemParserTools } from './tools/item.js';
 
-/**
- * Parse CLI arguments for --poe2-path.
- * @returns PoE2 installation path if provided, undefined otherwise.
- */
-function parsePoe2Path(): string | undefined {
+/** Read a named CLI argument value (e.g., `--poe2-path "/path"`). */
+function readCliArg(flag: string): string | undefined {
   const args = process.argv.slice(2);
-  const idx = args.indexOf('--poe2-path');
-  if (idx !== -1 && args[idx + 1]) {
-    return args[idx + 1];
-  }
-  return undefined;
-}
-
-/**
- * Parse CLI arguments for --pob2-path.
- * @returns PoB2 Builds directory path if provided, undefined otherwise.
- */
-function parsePob2Path(): string | undefined {
-  const args = process.argv.slice(2);
-  const idx = args.indexOf('--pob2-path');
-  if (idx !== -1 && args[idx + 1]) {
-    return args[idx + 1];
-  }
-  return undefined;
+  const idx = args.indexOf(flag);
+  return idx !== -1 && args[idx + 1] ? args[idx + 1] : undefined;
 }
 
 async function main(): Promise<void> {
-  const poe2Path = parsePoe2Path();
-  const pob2Path = parsePob2Path();
+  const poe2Path = readCliArg('--poe2-path');
+  const pob2Path = readCliArg('--pob2-path');
 
   const server = new McpServer({
     name: 'poe2-mcp-server',

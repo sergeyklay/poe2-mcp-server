@@ -2,21 +2,36 @@
  * Project-wide constants.
  * Single source of truth for values shared across tools and services.
  *
- * Update DEFAULT_LEAGUE each league rotation.
+ * DEFAULT_LEAGUE can be overridden at startup via `--league "League Name"` CLI argument.
+ * When not provided, falls back to the hardcoded current challenge league.
  */
 
 import { z } from 'zod';
 
-/** Current active PoE2 challenge league. Update each league rotation. */
-export const DEFAULT_LEAGUE = 'Dawn of the Hunt';
+/** Hardcoded fallback league. Update each league rotation. */
+const FALLBACK_LEAGUE = 'Dawn of the Hunt';
+
+/**
+ * Read a named CLI argument value from process.argv.
+ * @param flag - CLI flag name (e.g., '--league')
+ * @returns The argument value, or undefined if not provided
+ */
+function readCliArg(flag: string): string | undefined {
+  const args = process.argv.slice(2);
+  const idx = args.indexOf(flag);
+  return idx !== -1 && args[idx + 1] ? args[idx + 1] : undefined;
+}
+
+/** Default league for all tools. Overridable via `--league` CLI argument. */
+export const DEFAULT_LEAGUE = readCliArg('--league') ?? FALLBACK_LEAGUE;
 
 /** Shared Zod schema for the league parameter used by all tools. */
 export const LeagueSchema = z
   .string()
   .default(DEFAULT_LEAGUE)
   .describe(
-    `PoE2 league name. Current challenge league: "${DEFAULT_LEAGUE}". ` +
-      `Previous leagues: "Fate of the Vaal", "Rise of the Abyssal". ` +
+    `PoE2 league name. Current default: "${DEFAULT_LEAGUE}". ` +
+      `Challenge leagues: "Dawn of the Hunt", "Fate of the Vaal", "Rise of the Abyssal". ` +
       `Permanent leagues: "Standard", "Hardcore". ` +
-      `Hardcore variants: "HC ${DEFAULT_LEAGUE}".`,
+      `Hardcore variants: "HC Dawn of the Hunt".`,
   );
