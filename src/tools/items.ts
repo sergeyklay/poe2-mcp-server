@@ -190,7 +190,11 @@ Examples:
         ];
         for (const r of top) {
           lines.push(`**${r.name}** [${r.type}]`);
-          lines.push(`- Chaos: ${r.chaos.toFixed(1)} | Volume: ${r.volume}`);
+          if (r.chaos <= 0 && r.volume <= 0) {
+            lines.push('- Not enough trade data');
+          } else {
+            lines.push(`- Chaos: ${r.chaos.toFixed(1)} | Volume: ${r.volume}`);
+          }
           lines.push('');
         }
 
