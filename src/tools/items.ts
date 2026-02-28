@@ -1,8 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { getNinjaExchangeOverview } from '../services/api.js';
-
-const DEFAULT_LEAGUE = 'Fate of the Vaal';
+import { getNinjaExchangeOverview, displayNinjaName } from '../services/api.js';
+import { searchPoe2scoutUniques } from '../services/poe2scout.js';
+import { DEFAULT_LEAGUE, LeagueSchema } from '../constants.js';
 
 const EXCHANGE_TYPES = [
   'Currency',
@@ -30,9 +30,51 @@ const UNIQUE_TYPES = [
 
 const ALL_ITEM_TYPES = [...EXCHANGE_TYPES, ...UNIQUE_TYPES] as const;
 
-/** Title-case a slug id for display (e.g. "alch" → "Alch"). */
-function displayName(id: string, coreNames: Map<string, string>): string {
-  return coreNames.get(id) ?? id.charAt(0).toUpperCase() + id.slice(1);
+/** Map unique type enum values to poe2scout category slugs. */
+const UNIQUE_TYPE_TO_SCOUT_CATEGORY: Record<string, string> = {
+  UniqueArmour: 'armour',
+  UniqueWeapon: 'weapon',
+  UniqueAccessory: 'accessory',
+  UniqueJewel: 'jewel',
+  UniqueFlask: 'flask',
+};
+
+/** Whether the given type string is a unique item category. */
+function isUniqueType(t: string): boolean {
+  return t in UNIQUE_TYPE_TO_SCOUT_CATEGORY;
+}
+
+/**
+ * Search poe2scout for unique items matching a query in the given categories.
+ * Returns results in the same shape as exchange results for uniform formatting.
+ */
+async function searchUniqueTypes(
+  query: string,
+  uniqueTypes: string[],
+  league: string,
+): Promise<Array<{ name: string; type: string; chaos: number; volume: number }>> {
+  const results: Array<{ name: string; type: string; chaos: number; volume: number }> = [];
+
+  for (const t of uniqueTypes) {
+    const scoutCategory = UNIQUE_TYPE_TO_SCOUT_CATEGORY[t];
+    if (!scoutCategory) continue;
+
+    try {
+      const items = await searchPoe2scoutUniques(scoutCategory, query, league);
+      for (const item of items) {
+        results.push({
+          name: item.name,
+          type: t,
+          chaos: item.chaos,
+          volume: item.volume,
+        });
+      }
+    } catch {
+      // poe2scout category unavailable, skip silently
+    }
+  }
+
+  return results;
 }
 
 export function registerItemTools(server: McpServer): void {
@@ -41,14 +83,15 @@ export function registerItemTools(server: McpServer): void {
     'poe2_item_price',
     {
       title: 'PoE2 Item Price Lookup',
-      description: `Look up the current market price of an item in Path of Exile 2 from poe.ninja.
+      description: `Look up the current market price of an item in Path of Exile 2.
 
-Searches by partial name match across exchange categories (Currency, Fragments, Essences, Soul Cores, Idols, Runes, etc.) and unique item categories (UniqueArmour, UniqueWeapon, UniqueAccessory, UniqueJewel, UniqueFlask).
+Exchange categories (Currency, Fragments, Essences, etc.) use poe.ninja.
+Unique item categories (UniqueArmour, UniqueWeapon, etc.) use poe2scout.com.
 
 Args:
   - name (string): Item name or partial name, e.g. "divine", "essence", "rune"
   - type (string): Category to search. If omitted, searches all categories.
-  - league (string): League name (default: "Fate of the Vaal")
+  - league (string): League name (default: "${DEFAULT_LEAGUE}")
 
 Returns: Matching items with chaos-equivalent values and trade volumes.
 
@@ -64,7 +107,7 @@ Examples:
           .enum(ALL_ITEM_TYPES)
           .optional()
           .describe('Category to search. If omitted, searches all categories.'),
-        league: z.string().default(DEFAULT_LEAGUE).describe('PoE2 league name'),
+        league: LeagueSchema,
       },
       annotations: {
         readOnlyHint: true,
@@ -84,7 +127,12 @@ Examples:
           volume: number;
         }> = [];
 
-        for (const t of typesToSearch) {
+        // Split into exchange (poe.ninja) and unique (poe2scout) categories
+        const exchangeTypes = typesToSearch.filter((t) => !isUniqueType(t));
+        const uniqueTypes = typesToSearch.filter((t) => isUniqueType(t));
+
+        // Search poe.ninja for exchange categories
+        for (const t of exchangeTypes) {
           try {
             const data = await getNinjaExchangeOverview(league, t);
 
@@ -103,7 +151,7 @@ Examples:
 
               if (matchesQuery) {
                 results.push({
-                  name: displayName(line.id, coreNames),
+                  name: displayNinjaName(line.id, coreNames),
                   type: t,
                   chaos: line.primaryValue * chaosRate,
                   volume: line.volumePrimaryValue ?? 0,
@@ -111,8 +159,14 @@ Examples:
               }
             }
           } catch {
-            // Some categories may not be available, skip silently
+            // Category unavailable, skip silently
           }
+        }
+
+        // Search poe2scout for unique categories
+        if (uniqueTypes.length > 0) {
+          const uniqueResults = await searchUniqueTypes(query, uniqueTypes, league);
+          results.push(...uniqueResults);
         }
 
         if (results.length === 0) {
@@ -167,13 +221,13 @@ Examples:
 Args:
   - type (string): Exchange category — Currency, Fragments, Essences, SoulCores, Idols, Runes, etc.
   - limit (number): How many to return (default: 10, max: 30)
-  - league (string): League name (default: "Fate of the Vaal")
+  - league (string): League name (default: "${DEFAULT_LEAGUE}")
 
 Returns: Top N most valuable items sorted by chaos-equivalent value.`,
       inputSchema: {
         type: z.enum(EXCHANGE_TYPES).describe('Exchange category'),
         limit: z.number().int().min(1).max(30).default(10).describe('Number of results'),
-        league: z.string().default(DEFAULT_LEAGUE),
+        league: LeagueSchema,
       },
       annotations: {
         readOnlyHint: true,
@@ -199,7 +253,7 @@ Returns: Top N most valuable items sorted by chaos-equivalent value.`,
         const lines: string[] = [`## Top ${limit} ${type} — ${league}`, ''];
         for (let i = 0; i < top.length; i++) {
           const item = top[i]!;
-          const name = displayName(item.id, coreNames);
+          const name = displayNinjaName(item.id, coreNames);
           const chaosValue = (item.primaryValue * chaosRate).toFixed(1);
           const volume = item.volumePrimaryValue ?? 0;
           lines.push(`${i + 1}. **${name}** — ${chaosValue} chaos (volume: ${volume})`);

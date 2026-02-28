@@ -4,6 +4,7 @@ import {
   getNinjaExchangeOverview,
   getNinjaBuildIndex,
   getNinjaItemOverview,
+  displayNinjaName,
   getPoe2dbPage,
   normalizeTrailingArabicToRoman,
   searchWiki,
@@ -20,6 +21,10 @@ import {
   comparePobBuilds,
   parsePoe2dbHtml,
   formatPoe2dbSections,
+  searchPoe2scoutUniques,
+  lookupUniquePriceFromScout,
+  mapItemClassToScoutCategory,
+  getPoe2scoutUniques,
 } from './api.js';
 
 describe('api.ts barrel re-exports', () => {
@@ -28,6 +33,7 @@ describe('api.ts barrel re-exports', () => {
     { name: 'getNinjaExchangeOverview', value: getNinjaExchangeOverview },
     { name: 'getNinjaBuildIndex', value: getNinjaBuildIndex },
     { name: 'getNinjaItemOverview', value: getNinjaItemOverview },
+    { name: 'displayNinjaName', value: displayNinjaName },
     { name: 'getPoe2dbPage', value: getPoe2dbPage },
     { name: 'normalizeTrailingArabicToRoman', value: normalizeTrailingArabicToRoman },
     { name: 'searchWiki', value: searchWiki },
@@ -44,6 +50,10 @@ describe('api.ts barrel re-exports', () => {
     { name: 'comparePobBuilds', value: comparePobBuilds },
     { name: 'parsePoe2dbHtml', value: parsePoe2dbHtml },
     { name: 'formatPoe2dbSections', value: formatPoe2dbSections },
+    { name: 'searchPoe2scoutUniques', value: searchPoe2scoutUniques },
+    { name: 'lookupUniquePriceFromScout', value: lookupUniquePriceFromScout },
+    { name: 'mapItemClassToScoutCategory', value: mapItemClassToScoutCategory },
+    { name: 'getPoe2scoutUniques', value: getPoe2scoutUniques },
   ])('re-exports $name as a function', ({ value }) => {
     expect(typeof value).toBe('function');
   });

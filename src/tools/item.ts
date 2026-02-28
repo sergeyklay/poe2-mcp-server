@@ -5,6 +5,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { DEFAULT_LEAGUE, LeagueSchema } from '../constants.js';
 import {
   detectLanguage,
   GRANTED_SKILL_PATTERN,
@@ -65,13 +66,16 @@ import {
   type SupportedLanguage,
 } from '../services/strings.js';
 import {
-  getPoe2dbPage,
-  parsePoe2dbHtml,
-  getNinjaItemOverview,
   resolveEnglishBaseType,
-  type Poe2dbParsedPage,
   type Poe2dbLang,
 } from '../services/api.js';
+import { lookupUniquePriceFromScout } from '../services/poe2scout.js';
+import {
+  lookupBaseItem,
+  matchAllModTiers,
+  type ModTierResult,
+  type BaseItemStats,
+} from '../services/repoe.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Type Definitions
@@ -234,35 +238,10 @@ interface ParseContext {
 // Enrichment Interfaces
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Enrichment result for a single mod tier match. */
-interface ModTierMatch {
-  modText: string;
-  value: number;
-  tier: number;
-  range: [number, number];
-  bestTierAtIlvl: number | null;
-  prefixSuffix: 'prefix' | 'suffix' | null;
-}
-
-/** Enrichment result for base type stats. */
-interface BaseTypeEnrichment {
-  name: string;
-  baseEs: number | null;
-  baseArmour: number | null;
-  baseEvasion: number | null;
-  basePhysDamage: string | null;
-  baseCritChance: number | null;
-  baseAttackSpeed: number | null;
-  reqLevel: number | null;
-  reqStr: number | null;
-  reqDex: number | null;
-  reqInt: number | null;
-}
-
 /** Complete enrichment data appended to parsed item output. */
 interface ItemEnrichment {
-  baseType: BaseTypeEnrichment | null;
-  modTiers: ModTierMatch[];
+  baseItem: BaseItemStats | null;
+  modTiers: ModTierResult[];
   prefixCount: number;
   suffixCount: number;
   maxPrefixes: number;
@@ -278,9 +257,6 @@ interface ItemEnrichment {
 
 /** Section delimiter in PoE2 item text. */
 const SECTION_DELIMITER = '--------';
-
-/** Default league for price lookups. */
-const DEFAULT_LEAGUE = 'Fate of the Vaal';
 
 /** Item classes eligible for base type + mod tier enrichment. */
 const ENRICHABLE_EQUIPMENT_CLASSES =
@@ -299,10 +275,7 @@ const ItemClipboardSchema = z.object({
       'When true, appends enrichment data (mod tiers, base stats, unique prices). ' +
         'Set false for fast parsing only.',
     ),
-  league: z
-    .string()
-    .default(DEFAULT_LEAGUE)
-    .describe('League name for price lookups (only used when enrich=true and item is Unique)'),
+  league: LeagueSchema,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -314,20 +287,6 @@ function isEquipment(itemClass: string): boolean {
   return (
     ENRICHABLE_EQUIPMENT_CLASSES.test(itemClass) || ITEM_CLASS_EQUIPMENT_PATTERN.test(itemClass)
   );
-}
-
-/** Map an item class to the poe.ninja unique item overview type slug. */
-function mapItemClassToNinjaType(itemClass: string): string | null {
-  if (/body armour|helmet|glove|boot|shield|quiver|focus/i.test(itemClass)) {
-    return 'UniqueArmour';
-  }
-  if (/bow|staff|wand|sceptre|mace|sword|axe|claw|dagger|flail|spear|crossbow/i.test(itemClass)) {
-    return 'UniqueWeapon';
-  }
-  if (/ring|amulet|belt/i.test(itemClass)) return 'UniqueAccessory';
-  if (/jewel/i.test(itemClass)) return 'UniqueJewel';
-  if (/flask/i.test(itemClass)) return 'UniqueFlask';
-  return null;
 }
 
 /** Map the detected item language to a poe2db language code. */
@@ -356,239 +315,42 @@ function maxModSlots(rarity: ItemRarity): { prefixes: number; suffixes: number }
 }
 
 /**
- * Extract base type stats from a parsed poe2db page.
- * Parses the `stats` field for defensive/offensive values and requirements.
+ * Resolve the English base type name for enrichment lookups.
+ * For English items, returns the base type directly.
+ * For non-English, resolves via poe2db translation cache.
  */
-function extractBaseStats(page: Poe2dbParsedPage, baseType: string): BaseTypeEnrichment | null {
-  const src = page.stats;
-  if (!src) return null;
-
-  const result: BaseTypeEnrichment = {
-    name: baseType,
-    baseEs: null,
-    baseArmour: null,
-    baseEvasion: null,
-    basePhysDamage: null,
-    baseCritChance: null,
-    baseAttackSpeed: null,
-    reqLevel: null,
-    reqStr: null,
-    reqDex: null,
-    reqInt: null,
-  };
-
-  let matched = false;
-  for (const line of src.split('\n')) {
-    const l = line.trim();
-    let m: RegExpExecArray | null;
-
-    m = /Energy Shield:\s*(\d+)/i.exec(l);
-    if (m) {
-      result.baseEs = parseInt(m[1]!, 10);
-      matched = true;
-      continue;
-    }
-
-    m = /Armour:\s*(\d+)/i.exec(l);
-    if (m) {
-      result.baseArmour = parseInt(m[1]!, 10);
-      matched = true;
-      continue;
-    }
-
-    m = /Evasion(?:\s+Rating)?:\s*(\d+)/i.exec(l);
-    if (m) {
-      result.baseEvasion = parseInt(m[1]!, 10);
-      matched = true;
-      continue;
-    }
-
-    m = /Physical Damage:\s*(\d+-\d+)/i.exec(l);
-    if (m) {
-      result.basePhysDamage = m[1]!;
-      matched = true;
-      continue;
-    }
-
-    m = /Critical (?:Hit )?Chance:\s*([\d.]+)%/i.exec(l);
-    if (m) {
-      result.baseCritChance = parseFloat(m[1]!);
-      matched = true;
-      continue;
-    }
-
-    m = /Attacks? per Second:\s*([\d.]+)/i.exec(l);
-    if (m) {
-      result.baseAttackSpeed = parseFloat(m[1]!);
-      matched = true;
-      continue;
-    }
-
-    m = /Level:\s*(\d+)/i.exec(l);
-    if (m) {
-      result.reqLevel = parseInt(m[1]!, 10);
-      matched = true;
-      continue;
-    }
-
-    m = /Str:\s*(\d+)/i.exec(l);
-    if (m) {
-      result.reqStr = parseInt(m[1]!, 10);
-      matched = true;
-      continue;
-    }
-
-    m = /Dex:\s*(\d+)/i.exec(l);
-    if (m) {
-      result.reqDex = parseInt(m[1]!, 10);
-      matched = true;
-      continue;
-    }
-
-    m = /Int:\s*(\d+)/i.exec(l);
-    if (m) {
-      result.reqInt = parseInt(m[1]!, 10);
-      matched = true;
-      continue;
-    }
+async function resolveBaseTypeName(
+  item: ParsedItem,
+): Promise<{ englishName: string; englishBaseType: string | null }> {
+  if (item.detectedLanguage === 'en') {
+    return { englishName: item.baseType, englishBaseType: null };
   }
 
-  return matched ? result : null;
-}
-
-/** Replace all numeric values in a mod text with '#' for template matching. */
-function normalizeModTemplate(modText: string): string {
-  return modText
-    .replace(/[\d.]+/g, '#')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/** Extract all numeric values from mod text. */
-function extractNumericValues(modText: string): number[] {
-  return [...modText.matchAll(/([\d.]+)/g)].map((m) => parseFloat(m[1]!));
-}
-
-/**
- * Match item mods against poe2db mod tier data.
- * Parses sections from the parsed page looking for mod tier tables.
- */
-function matchModTiers(
-  page: Poe2dbParsedPage,
-  mods: ItemMod[],
-  itemLevel: number | null,
-): ModTierMatch[] {
-  const statsSection = page.sections.get('stats');
-  if (!statsSection?.content) return [];
-
-  const rows = statsSection.content.split('\n').filter((r) => r.trim());
-  if (rows.length === 0) return [];
-
-  // Parse tab-separated rows into structured tier data
-  interface TierRow {
-    template: string;
-    tier: number;
-    reqLevel: number;
-    min: number;
-    max: number;
-    prefixSuffix: 'prefix' | 'suffix' | null;
+  const poe2dbLang = mapLanguageToPoe2dbLang(item.detectedLanguage);
+  const itemClassSlug = mapItemClassToEnglishSlug(item.itemClass);
+  if (!itemClassSlug) {
+    return { englishName: item.baseType, englishBaseType: null };
   }
 
-  const tierRows: TierRow[] = [];
-  for (const row of rows) {
-    const cols = row.split('\t');
-    if (cols.length < 4) continue;
-
-    const modName = cols[0]?.trim() ?? '';
-    const tierStr = cols[1]?.trim() ?? '';
-    const levelStr = cols[2]?.trim() ?? '';
-    const rangeStr = cols[3]?.trim() ?? '';
-    const psTag = cols[4]?.trim().toLowerCase() ?? '';
-
-    const tierMatch = /(\d+)/.exec(tierStr);
-    if (!tierMatch) continue;
-
-    const rangeMatch = /(-?[\d.]+)\s*[-–]\s*(-?[\d.]+)/.exec(rangeStr);
-    if (!rangeMatch) continue;
-
-    tierRows.push({
-      template: normalizeModTemplate(modName),
-      tier: parseInt(tierMatch[1]!, 10),
-      reqLevel: parseInt(levelStr, 10) || 0,
-      min: parseFloat(rangeMatch[1]!),
-      max: parseFloat(rangeMatch[2]!),
-      prefixSuffix: psTag.startsWith('p') ? 'prefix' : psTag.startsWith('s') ? 'suffix' : null,
-    });
+  const englishSlug = await resolveEnglishBaseType(item.baseType, itemClassSlug, poe2dbLang);
+  if (englishSlug) {
+    const englishName = englishSlug.replace(/_/g, ' ');
+    return { englishName, englishBaseType: englishName };
   }
 
-  if (tierRows.length === 0) return [];
-
-  const results: ModTierMatch[] = [];
-  for (const mod of mods) {
-    if (mod.type !== 'explicit') continue;
-
-    const template = normalizeModTemplate(mod.text);
-    const values = extractNumericValues(mod.text);
-    if (values.length === 0) continue;
-
-    const value = values[0]!;
-    const matching = tierRows.filter((r) => r.template === template);
-    if (matching.length === 0) continue;
-
-    // Find the tier whose range contains the rolled value
-    const hit = matching.find((r) => value >= r.min && value <= r.max);
-    if (!hit) continue;
-
-    // Best tier at item level
-    const bestAtIlvl =
-      itemLevel !== null
-        ? (matching.filter((r) => r.reqLevel <= itemLevel).sort((a, b) => a.tier - b.tier)[0]
-            ?.tier ?? null)
-        : null;
-
-    results.push({
-      modText: mod.text,
-      value,
-      tier: hit.tier,
-      range: [hit.min, hit.max],
-      bestTierAtIlvl: bestAtIlvl,
-      prefixSuffix: hit.prefixSuffix,
-    });
-  }
-
-  return results;
-}
-
-/** Look up unique item price on poe.ninja. Returns null on any failure. */
-async function lookupUniquePrice(
-  name: string,
-  itemClass: string,
-  league: string,
-): Promise<{ chaos: number; volume: number } | null> {
-  try {
-    const ninjaType = mapItemClassToNinjaType(itemClass);
-    if (!ninjaType) return null;
-
-    const response = await getNinjaItemOverview(league, ninjaType);
-    const match = response.lines.find((line) => line.name.toLowerCase() === name.toLowerCase());
-    return match ? { chaos: match.chaosValue, volume: match.listingCount } : null;
-  } catch (err) {
-    console.error(
-      `Failed to lookup unique price for "${name}":`,
-      err instanceof Error ? err.message : String(err),
-    );
-    return null;
-  }
+  return { englishName: item.baseType, englishBaseType: null };
 }
 
 /**
  * Orchestrate all enrichment lookups for a parsed item.
+ * Uses RePoE datamined JSON for base stats and mod tiers.
+ * Uses poe2scout for unique item pricing.
  * Never throws — all errors are caught and result in partial/empty enrichment.
  */
 async function enrichItem(item: ParsedItem, league: string): Promise<ItemEnrichment> {
   const slots = maxModSlots(item.rarity);
   const enrichment: ItemEnrichment = {
-    baseType: null,
+    baseItem: null,
     modTiers: [],
     prefixCount: 0,
     suffixCount: 0,
@@ -598,63 +360,52 @@ async function enrichItem(item: ParsedItem, league: string): Promise<ItemEnrichm
     englishBaseType: null,
   };
 
-  // Base type + mod tiers (equipment only)
+  // Base type + mod tiers (equipment only, via RePoE)
   if (isEquipment(item.itemClass) && item.baseType) {
     try {
-      const poe2dbLang = mapLanguageToPoe2dbLang(item.detectedLanguage);
-      let slug: string;
+      const { englishName, englishBaseType } = await resolveBaseTypeName(item);
+      enrichment.englishBaseType = englishBaseType;
 
-      if (item.detectedLanguage === 'en') {
-        // English: use base type directly as slug
-        slug = item.baseType.replace(/\s+/g, '_');
-      } else {
-        // Non-English: resolve localized base type → English slug via poe2db
-        const itemClassSlug = mapItemClassToEnglishSlug(item.itemClass);
-        if (itemClassSlug) {
-          const englishSlug = await resolveEnglishBaseType(
-            item.baseType,
-            itemClassSlug,
-            poe2dbLang,
-          );
-          if (englishSlug) {
-            slug = englishSlug;
-            enrichment.englishBaseType = englishSlug.replace(/_/g, ' ');
-          } else {
-            // Fallback: try localized name as slug (unlikely to work)
-            slug = item.baseType.replace(/\s+/g, '_');
+      const baseItem = await lookupBaseItem(englishName);
+      if (baseItem) {
+        enrichment.baseItem = baseItem;
+
+        // Match explicit mods against RePoE tier data
+        if (item.rarity === 'Rare' || item.rarity === 'Magic') {
+          const explicitModTexts = item.mods
+            .filter((m) => m.type === 'explicit')
+            .map((m) => m.text);
+
+          if (explicitModTexts.length > 0) {
+            enrichment.modTiers = await matchAllModTiers(
+              explicitModTexts,
+              baseItem.tags,
+              item.itemLevel,
+            );
+            enrichment.prefixCount = enrichment.modTiers.filter(
+              (t) => t.prefixSuffix === 'prefix',
+            ).length;
+            enrichment.suffixCount = enrichment.modTiers.filter(
+              (t) => t.prefixSuffix === 'suffix',
+            ).length;
           }
-        } else {
-          slug = item.baseType.replace(/\s+/g, '_');
         }
       }
-
-      // Always fetch with 'us' lang for stats/mod tiers (English data)
-      const html = await getPoe2dbPage(slug, 'us');
-      const page = parsePoe2dbHtml(html);
-
-      const displayName = enrichment.englishBaseType ?? item.baseType;
-      enrichment.baseType = extractBaseStats(page, displayName);
-
-      const explicitMods = item.mods.filter((m) => m.type === 'explicit');
-      enrichment.modTiers = matchModTiers(page, explicitMods, item.itemLevel);
-      enrichment.prefixCount = enrichment.modTiers.filter(
-        (t) => t.prefixSuffix === 'prefix',
-      ).length;
-      enrichment.suffixCount = enrichment.modTiers.filter(
-        (t) => t.prefixSuffix === 'suffix',
-      ).length;
     } catch (err) {
       console.error(
-        `Enrichment: poe2db lookup failed for "${item.baseType}":`,
+        `Enrichment: RePoE lookup failed for "${item.baseType}":`,
         err instanceof Error ? err.message : String(err),
       );
     }
   }
 
-  // Unique pricing
+  // Unique pricing (via poe2scout)
   if (item.rarity === 'Unique' && item.name) {
     try {
-      enrichment.uniquePrice = await lookupUniquePrice(item.name, item.itemClass, league);
+      const price = await lookupUniquePriceFromScout(item.name, item.itemClass, league);
+      if (price && (price.chaos > 0 || price.volume > 0)) {
+        enrichment.uniquePrice = price;
+      }
     } catch (err) {
       console.error(
         `Enrichment: price lookup failed for "${item.name}":`,
@@ -671,52 +422,54 @@ function formatEnrichmentSection(enrichment: ItemEnrichment, item: ParsedItem): 
   const lines: string[] = [];
   let hasContent = false;
 
-  // Base type stats
-  if (enrichment.baseType) {
-    const bt = enrichment.baseType;
+  // Base type stats (from RePoE base_items.json)
+  if (enrichment.baseItem) {
+    const bi = enrichment.baseItem;
     const statParts: string[] = [];
-    if (bt.baseEs !== null) statParts.push(`Base ES: ${bt.baseEs}`);
-    if (bt.baseArmour !== null) statParts.push(`Base Armour: ${bt.baseArmour}`);
-    if (bt.baseEvasion !== null) statParts.push(`Base Evasion: ${bt.baseEvasion}`);
-    if (bt.basePhysDamage !== null) statParts.push(`Base Phys: ${bt.basePhysDamage}`);
-    if (bt.baseCritChance !== null) statParts.push(`Base Crit: ${bt.baseCritChance}%`);
-    if (bt.baseAttackSpeed !== null) statParts.push(`Base APS: ${bt.baseAttackSpeed}`);
+    if (bi.baseEs !== null) statParts.push(`Base ES: ${bi.baseEs}`);
+    if (bi.baseArmour !== null) statParts.push(`Base Armour: ${bi.baseArmour}`);
+    if (bi.baseEvasion !== null) statParts.push(`Base Evasion: ${bi.baseEvasion}`);
+    if (bi.basePhysDamageMin !== null && bi.basePhysDamageMax !== null) {
+      statParts.push(`Base Phys: ${bi.basePhysDamageMin}-${bi.basePhysDamageMax}`);
+    }
+    if (bi.baseCritChance !== null) statParts.push(`Base Crit: ${bi.baseCritChance}%`);
+    if (bi.baseAttackTime !== null) statParts.push(`Base APS: ${bi.baseAttackTime}`);
 
     const reqParts: string[] = [];
-    if (bt.reqLevel !== null) reqParts.push(`Lv${bt.reqLevel}`);
-    if (bt.reqStr !== null) reqParts.push(`Str ${bt.reqStr}`);
-    if (bt.reqDex !== null) reqParts.push(`Dex ${bt.reqDex}`);
-    if (bt.reqInt !== null) reqParts.push(`Int ${bt.reqInt}`);
+    if (bi.reqLevel !== null) reqParts.push(`Lv${bi.reqLevel}`);
+    if (bi.reqStr !== null) reqParts.push(`Str ${bi.reqStr}`);
+    if (bi.reqDex !== null) reqParts.push(`Dex ${bi.reqDex}`);
+    if (bi.reqInt !== null) reqParts.push(`Int ${bi.reqInt}`);
 
     const statsStr = statParts.length > 0 ? statParts.join(' | ') : '';
     const reqStr = reqParts.length > 0 ? ` | Req: ${reqParts.join(' ')}` : '';
 
     if (statsStr || reqStr) {
-      lines.push(`**Base:** ${bt.name} — ${statsStr}${reqStr}`);
+      lines.push(`**Base:** ${bi.name} — ${statsStr}${reqStr}`);
       hasContent = true;
     }
   }
 
-  // Mod tiers table
+  // Mod tiers table (from RePoE mods.json)
   if (enrichment.modTiers.length > 0) {
     const ilvlLabel = item.itemLevel !== null ? String(item.itemLevel) : '?';
     lines.push('');
     lines.push(`**Mod Tiers (Item Level ${ilvlLabel}):**`);
-    lines.push('| Modifier | Value | Tier | Range | Best at ilvl | P/S |');
-    lines.push('|----------|-------|------|-------|--------------|-----|');
+    lines.push('| Modifier | Value | Tier | Range | Best@ilvl | P/S |');
+    lines.push('|----------|-------|------|-------|-----------|-----|');
     for (const t of enrichment.modTiers) {
-      const ps = t.prefixSuffix === 'prefix' ? 'P' : t.prefixSuffix === 'suffix' ? 'S' : '-';
+      const ps = t.prefixSuffix === 'prefix' ? 'P' : 'S';
+      const tierLabel = `T${t.tier}/${t.totalTiers}`;
       const best = t.bestTierAtIlvl !== null ? `T${t.bestTierAtIlvl}` : '-';
       lines.push(
-        `| ${t.modText} | ${t.value} | T${t.tier} | ${t.range[0]}-${t.range[1]} | ${best} | ${ps} |`,
+        `| ${t.modText} | ${t.value} | ${tierLabel} | ${t.range[0]}–${t.range[1]} | ${best} | ${ps} |`,
       );
     }
     hasContent = true;
   }
 
-  // Open slots
-  const hasPrefixSuffix = enrichment.modTiers.some((t) => t.prefixSuffix !== null);
-  if (hasPrefixSuffix && (enrichment.maxPrefixes > 0 || enrichment.maxSuffixes > 0)) {
+  // Open prefix/suffix slots
+  if (enrichment.modTiers.length > 0 && (enrichment.maxPrefixes > 0 || enrichment.maxSuffixes > 0)) {
     const openP = enrichment.maxPrefixes - enrichment.prefixCount;
     const openS = enrichment.maxSuffixes - enrichment.suffixCount;
     lines.push('');
@@ -727,7 +480,7 @@ function formatEnrichmentSection(enrichment: ItemEnrichment, item: ParsedItem): 
     hasContent = true;
   }
 
-  // Unique pricing
+  // Unique pricing (from poe2scout)
   if (item.rarity === 'Unique') {
     const displayName = item.name ?? item.baseType;
     if (enrichment.uniquePrice) {
@@ -738,7 +491,6 @@ function formatEnrichmentSection(enrichment: ItemEnrichment, item: ParsedItem): 
       );
       hasContent = true;
     }
-    // Omit price line entirely when lookup fails — "not listed" is misleading
   }
 
   if (!hasContent) return '';
@@ -1790,10 +1542,24 @@ function parseItemClipboard(text: string): ParsedItem {
   item.grantedSkills = extractGrantedSkills(item.mods);
 
   if (item.grantedSkills.length > 0) {
-    item.mods = item.mods.filter(
-      (mod) =>
-        !GRANTED_SKILL_PATTERN.test(mod.text) && !GRANTED_SKILL_INLINE_PATTERN.test(mod.text),
+    // Build set of granted skill names (without level info) for deduplication.
+    // Weapons show a standalone skill name line (e.g. "Chaos Bolt") that is NOT
+    // a modifier — it's the weapon's inherent skill label. Filter it out when
+    // a matching "Grants Level X ... Skill" line was parsed.
+    const grantedSkillNames = new Set(
+      item.grantedSkills.map((s) => s.replace(/\s*\(Level\s+\d+\)\s*$/, '').toLowerCase()),
     );
+
+    item.mods = item.mods.filter((mod) => {
+      if (GRANTED_SKILL_PATTERN.test(mod.text) || GRANTED_SKILL_INLINE_PATTERN.test(mod.text)) {
+        return false;
+      }
+      // Suppress standalone skill name lines that duplicate a granted skill
+      if (mod.type === 'explicit' && grantedSkillNames.has(mod.text.trim().toLowerCase())) {
+        return false;
+      }
+      return true;
+    });
   }
 
   return item;
@@ -1820,11 +1586,12 @@ function formatItemAsMarkdown(item: ParsedItem, englishBaseType?: string | null)
   // Header
   const displayName = item.name ?? item.baseType;
   lines.push(`## ${displayName}`);
+  const rarityClass = [item.rarity, item.itemClass].filter(Boolean).join(' ');
   if (item.name && item.baseType) {
     const baseLabel = englishBaseType ? `${item.baseType} (${englishBaseType})` : item.baseType;
-    lines.push(`**${item.rarity} ${item.itemClass}** — ${baseLabel}`);
+    lines.push(`**${rarityClass}** — ${baseLabel}`);
   } else {
-    lines.push(`**${item.rarity} ${item.itemClass}**`);
+    lines.push(`**${rarityClass}**`);
   }
   lines.push('');
 
@@ -2166,7 +1933,7 @@ When enrich=true (default), appends enrichment data from external APIs.
 Args:
   - text (string): Raw item text copied from PoE2 clipboard
   - enrich (boolean, default true): Append mod tiers, base stats, unique prices
-  - league (string, default "Fate of the Vaal"): League for price lookups
+  - league (string, default "${DEFAULT_LEAGUE}"): League for price lookups
 
 Returns: Markdown-formatted breakdown including:
   - Base info (item class, rarity, name, base type, item level, quality)

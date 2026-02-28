@@ -6,21 +6,21 @@ All data is sourced from **public APIs only**. No API keys, no GGG OAuth registr
 
 ## Tools
 
-| Tool                    | Description                                           | Source                                                                        |
-| ----------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `poe2_currency_prices`  | Current exchange rates for all currencies             | [poe.ninja](https://poe.ninja/poe2)                                           |
-| `poe2_currency_check`   | Look up a specific currency by name                   | [poe.ninja](https://poe.ninja/poe2)                                           |
-| `poe2_item_price`       | Price check items across exchange categories          | [poe.ninja](https://poe.ninja/poe2)                                           |
-| `poe2_exchange_top`     | Most valuable items by exchange category              | [poe.ninja](https://poe.ninja/poe2)                                           |
-| `poe2_wiki_search`      | Search the PoE 2 community wiki                       | [poe2wiki.net](https://www.poe2wiki.net/)                                     |
-| `poe2_wiki_page`        | Retrieve full wiki article content                    | [poe2wiki.net](https://www.poe2wiki.net/)                                     |
-| `poe2_db_lookup`        | Datamined game data: gems, mods, items, translations  | [poe2db.tw](https://poe2db.tw/)                                               |
-| `poe2_meta_builds`      | Ladder class distribution with percentages and trends | [poe.ninja](https://poe.ninja/poe2)                                           |
-| `poe2_log_summary`      | Parse local game logs: zones, sessions, player events | Local logs                                                                    |
-| `poe2_pob_decode`       | Decode builds from pobb.in, poe.ninja, or local files | [pobb.in](https://pobb.in/) / [poe.ninja](https://poe.ninja/poe2/pob) / local |
-| `poe2_pob_local_builds` | List saved PoB2 builds from local filesystem          | Local PoB2                                                                    |
-| `poe2_pob_compare`      | Compare two builds to identify gear/skill differences | [pobb.in](https://pobb.in/) / [poe.ninja](https://poe.ninja/poe2/pob) / local |
-| `poe2_parse_item`       | Parse item clipboard text into structured breakdown   | Client-side (no API)                                                          |
+| Tool                    | Description                                                                      | Source                                                                           |
+| ----------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `poe2_currency_prices`  | Current exchange rates for all currencies                                        | [poe.ninja](https://poe.ninja/poe2)                                              |
+| `poe2_currency_check`   | Look up a specific currency by name                                              | [poe.ninja](https://poe.ninja/poe2)                                              |
+| `poe2_item_price`       | Price check items across exchange and unique categories                          | [poe.ninja](https://poe.ninja/poe2) / [poe2scout](https://poe2scout.com/)        |
+| `poe2_exchange_top`     | Most valuable items by exchange category                                         | [poe.ninja](https://poe.ninja/poe2)                                              |
+| `poe2_wiki_search`      | Search the PoE 2 community wiki                                                  | [poe2wiki.net](https://www.poe2wiki.net/)                                        |
+| `poe2_wiki_page`        | Retrieve full wiki article content                                               | [poe2wiki.net](https://www.poe2wiki.net/)                                        |
+| `poe2_db_lookup`        | Datamined game data: gems, mods, items, translations                             | [poe2db.tw](https://poe2db.tw/)                                                  |
+| `poe2_meta_builds`      | Ladder class distribution with percentages and trends                            | [poe.ninja](https://poe.ninja/poe2)                                              |
+| `poe2_log_summary`      | Parse local game logs: zones, sessions, player events                            | Local logs                                                                       |
+| `poe2_pob_decode`       | Decode builds from pobb.in, poe.ninja, or local files                            | [pobb.in](https://pobb.in/) / [poe.ninja](https://poe.ninja/poe2/pob) / local    |
+| `poe2_pob_local_builds` | List saved PoB2 builds from local filesystem                                     | Local PoB2                                                                       |
+| `poe2_pob_compare`      | Compare two builds to identify gear/skill differences                            | [pobb.in](https://pobb.in/) / [poe.ninja](https://poe.ninja/poe2/pob) / local    |
+| `poe2_parse_item`       | Parse item clipboard text with enrichment (mod tiers, base stats, unique prices) | Client-side + [poe2db](https://poe2db.tw/) + [poe2scout](https://poe2scout.com/) |
 
 ## Requirements
 
@@ -320,14 +320,15 @@ If the player uses a non-English game client:
 
 ## Supported Leagues
 
-Default league: **Fate of the Vaal** (patch 0.4.x). Any active PoE2 league can be passed by name:
+Default league: **Dawn of the Hunt**. Any active PoE2 league can be passed by name. Update `DEFAULT_LEAGUE` in `src/constants.ts` each league rotation.
 
-| League          | Name (case-sensitive)  |
-| --------------- | ---------------------- |
-| Softcore Trade  | `Fate of the Vaal`     |
-| Hardcore        | `HC Fate of the Vaal`  |
-| Solo Self-Found | `SSF Fate of the Vaal` |
-| Permanent       | `Standard`             |
+| League           | Name (case-sensitive)                     |
+| ---------------- | ----------------------------------------- |
+| Softcore Trade   | `Dawn of the Hunt`                        |
+| Hardcore         | `HC Dawn of the Hunt`                     |
+| Previous leagues | `Fate of the Vaal`, `Rise of the Abyssal` |
+| Permanent SC     | `Standard`                                |
+| Permanent HC     | `Hardcore`                                |
 
 ## Architecture
 
@@ -335,13 +336,22 @@ Default league: **Fate of the Vaal** (patch 0.4.x). Any active PoE2 league can b
 poe2-mcp-server/
 ├── src/
 │   ├── index.ts                    # Entry point: server init, stdio transport
+│   ├── constants.ts                # DEFAULT_LEAGUE, LeagueSchema — shared project constants
 │   ├── services/
-│   │   ├── api.ts                  # HTTP client, rate limiter, logs parsing
-│   │   └── poe2-client-strings.ts  # 11-language keyword mappings for item parsing
+│   │   ├── api.ts                  # Barrel re-export for all service modules
+│   │   ├── http.ts                 # HTTP client, RateLimiter, User-Agent
+│   │   ├── ninja.ts                # poe.ninja exchange & build APIs
+│   │   ├── poe2scout.ts            # poe2scout.com unique item pricing API
+│   │   ├── poe2db.ts               # poe2db.tw HTML parsing & translation cache
+│   │   ├── wiki.ts                 # poe2wiki.net MediaWiki API
+│   │   ├── strings.ts              # 11-language keyword mappings for item parsing
+│   │   ├── logfile.ts              # Client.txt log parsing
+│   │   ├── pob.ts                  # Path of Building decode/compare
+│   │   └── repoe.ts                # RePoE datamined JSON — mod tiers, base item stats
 │   └── tools/
 │       ├── currency.ts             # Currency exchange rate tools
-│       ├── items.ts                # Exchange item price tools
-│       ├── item.ts                 # Clipboard item parser (11 languages)
+│       ├── items.ts                # Exchange & unique item price tools
+│       ├── item.ts                 # Clipboard item parser with enrichment (11 languages)
 │       ├── wiki.ts                 # Wiki search & poe2db lookup
 │       ├── builds.ts               # Meta build overview
 │       ├── logfile.ts              # Local logs parser
@@ -358,14 +368,16 @@ poe2-mcp-server/
 | --------------------------------------------------------- | ---- | ------------------ | ---------------- |
 | [poe.ninja](https://poe.ninja/poe2) PoE2 Exchange API     | None | ~12 req / 5 min    | ~1 hour          |
 | [poe.ninja](https://poe.ninja/poe2) PoE2 Build Index API  | None | ~12 req / 5 min    | ~1 hour          |
+| [poe2scout.com](https://poe2scout.com/) Unique Item API   | None | ~10 req / min      | ~1 hour          |
 | [poe2wiki.net](https://www.poe2wiki.net/) MediaWiki API   | None | Standard MW limits | Community-driven |
-| [poe2db.tw](https://poe2db.tw/)                           | None | Reasonable use     | Each patch       |
+| [RePoE](https://repoe-fork.github.io/poe2/) Datamined JSON | None | ~5 req / min       | Each patch       |
+| [poe2db.tw](https://poe2db.tw/)                           | None | ~15 req / min      | Each patch       |
 | [pobb.in](https://pobb.in/) PoB paste service             | None | ~10 req / min      | On-demand        |
 | [poe.ninja](https://poe.ninja/poe2/pob) PoB paste hosting | None | ~12 req / 5 min    | On-demand        |
 | Local `Client.txt` / `LatestClient.txt`                   | None | N/A (local file)   | Real-time        |
 | Local PoB2 Builds directory                               | None | N/A (local file)   | Real-time        |
 
-A built-in rate limiter ensures poe.ninja limits are respected automatically.
+Built-in rate limiters ensure all API limits are respected automatically.
 
 ## Development
 
