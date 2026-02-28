@@ -6,21 +6,21 @@ All data is sourced from **public APIs only**. No API keys, no GGG OAuth registr
 
 ## Tools
 
-| Tool                    | Description                                                                      | Source                                                                           |
-| ----------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `poe2_currency_prices`  | Current exchange rates for all currencies                                        | [poe.ninja](https://poe.ninja/poe2)                                              |
-| `poe2_currency_check`   | Look up a specific currency by name                                              | [poe.ninja](https://poe.ninja/poe2)                                              |
-| `poe2_item_price`       | Price check items across exchange and unique categories                          | [poe.ninja](https://poe.ninja/poe2) / [poe2scout](https://poe2scout.com/)        |
-| `poe2_exchange_top`     | Most valuable items by exchange category                                         | [poe.ninja](https://poe.ninja/poe2)                                              |
-| `poe2_wiki_search`      | Search the PoE 2 community wiki                                                  | [poe2wiki.net](https://www.poe2wiki.net/)                                        |
-| `poe2_wiki_page`        | Retrieve full wiki article content                                               | [poe2wiki.net](https://www.poe2wiki.net/)                                        |
-| `poe2_db_lookup`        | Datamined game data: gems, mods, items, translations                             | [poe2db.tw](https://poe2db.tw/)                                                  |
-| `poe2_meta_builds`      | Ladder class distribution with percentages and trends                            | [poe.ninja](https://poe.ninja/poe2)                                              |
-| `poe2_log_summary`      | Parse local game logs: zones, sessions, player events                            | Local logs                                                                       |
-| `poe2_pob_decode`       | Decode builds from pobb.in, poe.ninja, or local files                            | [pobb.in](https://pobb.in/) / [poe.ninja](https://poe.ninja/poe2/pob) / local    |
-| `poe2_pob_local_builds` | List saved PoB2 builds from local filesystem                                     | Local PoB2                                                                       |
-| `poe2_pob_compare`      | Compare two builds to identify gear/skill differences                            | [pobb.in](https://pobb.in/) / [poe.ninja](https://poe.ninja/poe2/pob) / local    |
-| `poe2_parse_item`       | Parse item clipboard text with enrichment (mod tiers, base stats, unique prices) | Client-side + [poe2db](https://poe2db.tw/) + [poe2scout](https://poe2scout.com/) |
+| Tool                    | Description                                                                      | Source                                                                                          |
+| ----------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `poe2_currency_prices`  | Current exchange rates for all currencies                                        | [poe.ninja](https://poe.ninja/poe2)                                                             |
+| `poe2_currency_check`   | Look up a specific currency by name                                              | [poe.ninja](https://poe.ninja/poe2)                                                             |
+| `poe2_item_price`       | Price check items across exchange and unique categories                          | [poe.ninja](https://poe.ninja/poe2) / [poe2scout](https://poe2scout.com/)                       |
+| `poe2_exchange_top`     | Most valuable items by exchange category                                         | [poe.ninja](https://poe.ninja/poe2)                                                             |
+| `poe2_wiki_search`      | Search the PoE 2 community wiki                                                  | [poe2wiki.net](https://www.poe2wiki.net/)                                                       |
+| `poe2_wiki_page`        | Retrieve full wiki article content                                               | [poe2wiki.net](https://www.poe2wiki.net/)                                                       |
+| `poe2_db_lookup`        | Datamined game data: gems, mods, items, translations                             | [poe2db.tw](https://poe2db.tw/)                                                                 |
+| `poe2_meta_builds`      | Ladder class distribution with percentages and trends                            | [poe.ninja](https://poe.ninja/poe2)                                                             |
+| `poe2_log_summary`      | Parse local game logs: zones, sessions, player events                            | Local logs                                                                                      |
+| `poe2_pob_decode`       | Decode builds from pobb.in, poe.ninja, or local files                            | [pobb.in](https://pobb.in/) / [poe.ninja](https://poe.ninja/poe2/pob) / local                   |
+| `poe2_pob_local_builds` | List saved PoB2 builds from local filesystem                                     | Local PoB2                                                                                      |
+| `poe2_pob_compare`      | Compare two builds to identify gear/skill differences                            | [pobb.in](https://pobb.in/) / [poe.ninja](https://poe.ninja/poe2/pob) / local                   |
+| `poe2_parse_item`       | Parse item clipboard text with enrichment (mod tiers, base stats, unique prices) | Client-side + [RePoE](https://repoe-fork.github.io/poe2/) + [poe2scout](https://poe2scout.com/) |
 
 ## Requirements
 
@@ -255,8 +255,9 @@ without being condescending. Communicate in the user's language.
 ## Tool Usage Protocol
 
 You have access to a PoE 2 MCP server with tools for: game logs, wiki, datamined game database
-(poe2db), currency prices, item prices, item clipboard parsing, and meta build stats. These tools
-are your PRIMARY data source for everything PoE 2 related.
+(poe2db), currency prices, item prices, item clipboard parsing with enrichment (mod tiers, base
+stats, unique pricing), build decoding/comparison, and meta build stats. These tools are your
+PRIMARY data source for everything PoE 2 related.
 
 For EVERY user message about gameplay, follow this sequence BEFORE responding:
 
@@ -275,11 +276,38 @@ NEVER ask the user for information you can obtain from tools:
 - "What does skill X do?" → use `poe2_wiki_search` or `poe2_db_lookup`
 - "How much does Y cost?" → use `poe2_currency_check` or `poe2_item_price`
 - "What builds are popular?" → use `poe2_meta_builds`
+- "Is this item good?" → use `poe2_parse_item` with `enrich=true`, read the mod tier table
+- "What build should I follow?" → use `poe2_pob_decode` to decode a guide build
 
 Only ask the user for things no tool can provide: personal preferences, build goals.
 
 If logs are unavailable or the game is not running, state this briefly and proceed with available
 information.
+
+## Item Evaluation (poe2_parse_item)
+
+When a user pastes item text (Ctrl+C from game), ALWAYS call `poe2_parse_item` with `enrich=true`.
+The enrichment section contains:
+
+- **Base type stats** — base ES/Armour/Evasion from datamined data (RePoE)
+- **Mod tier table** — each explicit mod with Tier (T1/8 = best of 8 tiers), value range,
+  prefix/suffix classification, and best tier available at the item's ilvl
+- **Open slots** — how many prefix/suffix slots remain for crafting
+- **Unique pricing** — chaos value from poe2scout.com (when available)
+
+Use this data to give specific verdicts:
+
+- "Your +50 ES is T1/8 (range 40–55) — that's the best tier, excellent roll"
+- "Your 12% cast speed is T2/4 — decent but T1 starts at 13%"
+- "You have 2 open prefixes — you can craft flat life or another damage mod"
+
+## Build Comparison (poe2*pob*\*)
+
+When a user shares a pobb.in or poe.ninja/poe2/pob link:
+
+1. Use `poe2_pob_decode` to decode the build
+2. If comparing to another build, use `poe2_pob_compare`
+3. Use `poe2_pob_local_builds` to list the user's saved builds
 
 ## Localization Support
 
@@ -288,8 +316,23 @@ If the player uses a non-English game client:
 1. Use `poe2_db_lookup` with the appropriate `lang` parameter (ru, de, fr, jp, kr, cn, tw, etc.)
 2. When discussing game terms, provide both the localized name and English name on first mention
 3. NEVER guess translations — always verify via the database
+4. `poe2_parse_item` auto-detects language and enrichment resolves English base type names
 
 ## Examples
+
+### User pastes an item
+
+**User:** "Is this any good? [paste item text]"
+
+**Correct behavior:**
+
+1. Call `poe2_parse_item(text=..., enrich=true)` → get mod tiers, base stats
+2. Read the tier table: identify which mods are T1/T2 (great) vs T5+ (mediocre)
+3. Check open prefix/suffix slots for crafting potential
+4. If unique, note the price from enrichment
+5. Give a clear verdict: keep/sell/craft, with specific reasoning from tier data
+
+**Wrong:** Eyeball the numbers without looking up tier data.
 
 ### User asks for help without context
 
@@ -298,9 +341,8 @@ If the player uses a non-English game client:
 **Correct behavior:**
 
 1. Call `poe2_log_summary` → determine current zone and level
-2. If the user pastes item text, call `poe2_parse_item` to get structured data
-3. Look up relevant game mechanics via `poe2_db_lookup` or `poe2_wiki_search`
-4. Respond with specific, actionable steps based on actual player state
+2. Look up relevant game mechanics via `poe2_db_lookup` or `poe2_wiki_search`
+3. Respond with specific, actionable steps based on actual player state
 
 **Wrong:** Ask "What zone are you in?" when logs have this information.
 
@@ -322,16 +364,17 @@ If the player uses a non-English game client:
 
 **Correct behavior:**
 
-1. Use `poe2_item_price` to check current market value
-2. Use `poe2_currency_check` for currency conversions if needed
-3. Give a clear verdict with current prices
+1. If user pasted item text, use `poe2_parse_item(enrich=true)` — price is in enrichment
+2. Otherwise use `poe2_item_price` to check current market value
+3. Use `poe2_currency_check` for currency conversions if needed
+4. Give a clear verdict with current prices
 
 **Wrong:** Give outdated price estimates from training data.
 
 ## Response Guidelines
 
 - Keep responses focused and actionable
-- For item comparisons: give a clear verdict, then explain why
+- For item evaluations: lead with the verdict, then cite specific tier data
 - For "what do I do?" questions: numbered steps, priority order
 - Always end guidance with the single most important next action
 ```
