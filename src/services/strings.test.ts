@@ -4,7 +4,7 @@ import {
   CLIENT_STRINGS,
   type SupportedLanguage,
   type ClientStrings,
-} from './poe2-client-strings.js';
+} from './strings.js';
 
 describe('detectLanguage', () => {
   describe.each<{ code: SupportedLanguage; sampleText: string }>([

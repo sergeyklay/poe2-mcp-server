@@ -106,6 +106,96 @@ describe('poe2_item_price', () => {
 
     expect(result.content[0]!.text).toContain('No items found');
   });
+
+  it('finds unique items by partial name match', async () => {
+    vi.mocked(getNinjaExchangeOverview).mockResolvedValue(
+      mockExchangeResponse([
+        {
+          id: 'kaoms-heart',
+          primaryValue: 3.5,
+          volumePrimaryValue: 80,
+        },
+      ]),
+    );
+
+    const result = await handler({
+      name: 'kaom',
+      type: 'UniqueArmour',
+      league: 'Standard',
+    });
+
+    expect(result.content[0]!.text).not.toContain('No items found');
+  });
+
+  it('searches all types including unique types when type is omitted', async () => {
+    vi.mocked(getNinjaExchangeOverview).mockResolvedValue(mockExchangeResponse([]));
+
+    await handler({ name: 'test', league: 'Standard' });
+
+    const calledTypes = vi.mocked(getNinjaExchangeOverview).mock.calls.map((c) => c[1]);
+    expect(calledTypes).toContain('Currency');
+    expect(calledTypes).toContain('UniqueArmour');
+    expect(calledTypes).toContain('UniqueWeapon');
+    expect(calledTypes).toContain('UniqueAccessory');
+    expect(calledTypes).toContain('UniqueJewel');
+    expect(calledTypes).toContain('UniqueFlask');
+  });
+
+  it('returns unique item with chaos value in results', async () => {
+    vi.mocked(getNinjaExchangeOverview).mockImplementation(async (_league, type) => {
+      if (type === 'UniqueAccessory') {
+        return {
+          core: {
+            items: [
+              {
+                id: 'atziris-disdain',
+                name: "Atziri's Disdain",
+                image: '',
+                category: 'UniqueAccessory',
+                detailsId: 'atziris-disdain',
+              },
+            ],
+            rates: { chaos: 27 },
+            primary: 'divine',
+            secondary: 'chaos',
+          },
+          lines: [
+            {
+              id: 'atziris-disdain',
+              primaryValue: 2,
+              volumePrimaryValue: 50,
+              maxVolumeCurrency: 'chaos',
+              maxVolumeRate: 27,
+              sparkline: { totalChange: 0, data: [] },
+            },
+          ],
+        };
+      }
+      return mockExchangeResponse([]);
+    });
+
+    const result = await handler({
+      name: "Atziri's Disdain",
+      type: 'UniqueAccessory',
+      league: 'Standard',
+    });
+
+    expect(result.content[0]!.text).toContain("Atziri's Disdain");
+    expect(result.content[0]!.text).toContain('[UniqueAccessory]');
+  });
+
+  it('includes all item types in no-results message', async () => {
+    vi.mocked(getNinjaExchangeOverview).mockResolvedValue(mockExchangeResponse([]));
+
+    const result = await handler({
+      name: 'nonexistent_xyz',
+      type: 'UniqueArmour',
+      league: 'Standard',
+    });
+
+    expect(result.content[0]!.text).toContain('UniqueArmour');
+    expect(result.content[0]!.text).toContain('UniqueFlask');
+  });
 });
 
 describe('poe2_exchange_top', () => {

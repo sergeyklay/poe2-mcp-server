@@ -1,5 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+
+vi.mock('../services/api.js', () => ({
+  getPoe2dbPage: vi.fn(),
+  parsePoe2dbHtml: vi.fn(),
+  getNinjaItemOverview: vi.fn(),
+  resolveEnglishBaseType: vi.fn(),
+}));
+
+import {
+  getPoe2dbPage,
+  parsePoe2dbHtml,
+  getNinjaItemOverview,
+  resolveEnglishBaseType,
+} from '../services/api.js';
 import { registerItemParserTools } from './item.js';
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
@@ -3010,6 +3024,690 @@ Soul Core of Tacati
       const output = result.content[0]!.text;
 
       expect(output).toContain('S(Железная руна)');
+    });
+  });
+
+  describe('enrichment', () => {
+    beforeEach(() => {
+      vi.mocked(getPoe2dbPage).mockReset();
+      vi.mocked(parsePoe2dbHtml).mockReset();
+      vi.mocked(getNinjaItemOverview).mockReset();
+    });
+
+    function setupPoe2dbMock(options: { stats?: string; tierData?: string } = {}) {
+      vi.mocked(getPoe2dbPage).mockResolvedValue('<html>mock</html>');
+      const sections = new Map<
+        string,
+        { id: string; header: string; content: string; itemCount: number | null }
+      >();
+      if (options.tierData) {
+        sections.set('stats', {
+          id: 'stats',
+          header: 'Stats',
+          content: options.tierData,
+          itemCount: null,
+        });
+      }
+      vi.mocked(parsePoe2dbHtml).mockReturnValue({
+        title: 'Test Page',
+        description: '',
+        stats: options.stats ?? '',
+        sections,
+      });
+    }
+
+    function setupNinjaMock(name: string, chaos: number, volume: number) {
+      vi.mocked(getNinjaItemOverview).mockResolvedValue({
+        lines: [
+          {
+            id: 1,
+            name,
+            icon: '',
+            baseType: '',
+            itemClass: 0,
+            chaosValue: chaos,
+            divineValue: 0,
+            listingCount: volume,
+            sparkline: { totalChange: 0, data: [] },
+          },
+        ],
+      });
+    }
+
+    const rareBodyArmour = `Item Class: Body Armours
+Rarity: Rare
+Storm Shell
+Expert Vaal Regalia
+--------
+Energy Shield: 200 (augmented)
+--------
+Requires Level 52, 78 Str, 45 Int
+--------
+Sockets: S S
+--------
+Item Level: 75
+--------
++50 to maximum Energy Shield
+15% increased Evasion Rating
++30 to Intelligence`;
+
+    const uniqueRing = `Item Class: Rings
+Rarity: Unique
+Circle of Guilt
+Sapphire Ring
+--------
+Requires Level 45
+--------
+Item Level: 68
+--------
++25 to Intelligence
+10% increased maximum Energy Shield`;
+
+    const currencyItem = `Item Class: Stackable Currency
+Rarity: Currency
+Exalted Orb
+--------
+Stack Size: 3/10
+--------
+Adds a random modifier to a rare item`;
+
+    const uniqueBodyArmour = `Item Class: Body Armours
+Rarity: Unique
+Kaom's Heart
+Glorious Plate
+--------
+Armour: 800 (augmented)
+--------
+Requires Level 60, 100 Str
+--------
+Item Level: 80
+--------
++500 to maximum Life`;
+
+    const magicGloves = `Item Class: Gloves
+Rarity: Magic
+Ample Iron Gauntlets of Skill
+Iron Gauntlets
+--------
+Armour: 50
+--------
+Item Level: 30
+--------
++20 to maximum Life
+5% increased Attack Speed`;
+
+    const tierData = [
+      '+60 to maximum Energy Shield\tTier 1\t68\t40-55\tprefix',
+      '+40 to maximum Energy Shield\tTier 2\t55\t25-39\tprefix',
+      '20% increased Evasion Rating\tTier 1\t70\t15-20\tsuffix',
+      '12% increased Evasion Rating\tTier 2\t50\t10-14\tsuffix',
+      '+40 to Intelligence\tTier 1\t60\t25-35\tsuffix',
+      '+20 to Intelligence\tTier 2\t40\t15-24\tsuffix',
+    ].join('\n');
+
+    describe('handler integration', () => {
+      it('appends enrichment section when enrich=true on equipment', async () => {
+        setupPoe2dbMock({ stats: 'Energy Shield: 150\nLevel: 52' });
+
+        const result = await handler({ text: rareBodyArmour, enrich: true });
+
+        expect(result.content[0]!.text).toContain('### Enrichment');
+        expect(result.content[0]!.text).toContain('**Base:**');
+      });
+
+      it('skips enrichment when enrich is not provided', async () => {
+        const result = await handler({ text: rareBodyArmour });
+
+        expect(result.content[0]!.text).not.toContain('### Enrichment');
+        expect(getPoe2dbPage).not.toHaveBeenCalled();
+      });
+
+      it('skips enrichment when enrich=false', async () => {
+        const result = await handler({ text: rareBodyArmour, enrich: false });
+
+        expect(result.content[0]!.text).not.toContain('### Enrichment');
+        expect(getPoe2dbPage).not.toHaveBeenCalled();
+      });
+
+      it('does not break parsing when poe2db fails', async () => {
+        vi.mocked(getPoe2dbPage).mockRejectedValue(new Error('Network error'));
+
+        const result = await handler({ text: rareBodyArmour, enrich: true });
+
+        expect(result.isError).toBeUndefined();
+        expect(result.content[0]!.text).toContain('## Storm Shell');
+      });
+
+      it('does not break parsing when ninja fails', async () => {
+        vi.mocked(getNinjaItemOverview).mockRejectedValue(new Error('404'));
+
+        const result = await handler({ text: uniqueRing, enrich: true });
+
+        expect(result.isError).toBeUndefined();
+        // Price line is omitted entirely on lookup failure (not misleading "not listed")
+        expect(result.content[0]!.text).not.toContain('**Price:**');
+      });
+
+      it('passes league to ninja lookup', async () => {
+        setupNinjaMock('Circle of Guilt', 150, 25);
+
+        await handler({ text: uniqueRing, enrich: true, league: 'Test League' });
+
+        expect(getNinjaItemOverview).toHaveBeenCalledWith('Test League', 'UniqueAccessory');
+      });
+
+      it('uses default league when not specified', async () => {
+        setupNinjaMock('Circle of Guilt', 150, 25);
+
+        await handler({ text: uniqueRing, enrich: true });
+
+        expect(getNinjaItemOverview).toHaveBeenCalledWith('Fate of the Vaal', 'UniqueAccessory');
+      });
+    });
+
+    describe('equipment classification', () => {
+      it('calls poe2db for equipment item class', async () => {
+        setupPoe2dbMock();
+
+        await handler({ text: rareBodyArmour, enrich: true });
+
+        expect(getPoe2dbPage).toHaveBeenCalledWith('Expert_Vaal_Regalia', 'us');
+      });
+
+      it('does not call poe2db for currency', async () => {
+        await handler({ text: currencyItem, enrich: true });
+
+        expect(getPoe2dbPage).not.toHaveBeenCalled();
+      });
+
+      it('calls poe2db for accessories (rings are now enrichable)', async () => {
+        setupPoe2dbMock();
+        setupNinjaMock('Circle of Guilt', 100, 10);
+
+        await handler({ text: uniqueRing, enrich: true });
+
+        expect(getPoe2dbPage).toHaveBeenCalled();
+      });
+    });
+
+    describe('non-English poe2db language mapping', () => {
+      it('passes us lang for English items', async () => {
+        setupPoe2dbMock();
+
+        await handler({ text: rareBodyArmour, enrich: true });
+
+        expect(getPoe2dbPage).toHaveBeenCalledWith('Expert_Vaal_Regalia', 'us');
+      });
+
+      it('passes us lang for English unique body armour', async () => {
+        setupPoe2dbMock();
+        setupNinjaMock("Kaom's Heart", 500, 50);
+
+        await handler({ text: uniqueBodyArmour, enrich: true });
+
+        expect(getPoe2dbPage).toHaveBeenCalledWith('Glorious_Plate', 'us');
+      });
+    });
+
+    describe('ninja type mapping', () => {
+      it('maps body armour to UniqueArmour', async () => {
+        setupPoe2dbMock();
+        setupNinjaMock("Kaom's Heart", 500, 50);
+
+        await handler({ text: uniqueBodyArmour, enrich: true });
+
+        expect(getNinjaItemOverview).toHaveBeenCalledWith(expect.any(String), 'UniqueArmour');
+      });
+
+      it('maps ring to UniqueAccessory', async () => {
+        setupNinjaMock('Circle of Guilt', 150, 25);
+
+        await handler({ text: uniqueRing, enrich: true });
+
+        expect(getNinjaItemOverview).toHaveBeenCalledWith(expect.any(String), 'UniqueAccessory');
+      });
+
+      it('does not call ninja for non-unique items', async () => {
+        setupPoe2dbMock();
+
+        await handler({ text: rareBodyArmour, enrich: true });
+
+        expect(getNinjaItemOverview).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('base stats extraction', () => {
+      it('renders energy shield and requirements from poe2db', async () => {
+        setupPoe2dbMock({ stats: 'Energy Shield: 150\nLevel: 52\nInt: 45' });
+
+        const result = await handler({ text: rareBodyArmour, enrich: true });
+        const output = result.content[0]!.text;
+
+        expect(output).toContain('**Base:** Expert Vaal Regalia');
+        expect(output).toContain('Base ES: 150');
+        expect(output).toContain('Lv52');
+        expect(output).toContain('Int 45');
+      });
+
+      it('renders armour and strength requirement', async () => {
+        setupPoe2dbMock({ stats: 'Armour: 100\nLevel: 30\nStr: 50' });
+
+        const result = await handler({ text: magicGloves, enrich: true });
+        const output = result.content[0]!.text;
+
+        expect(output).toContain('Base Armour: 100');
+        expect(output).toContain('Str 50');
+      });
+
+      it('renders weapon stats', async () => {
+        setupPoe2dbMock({
+          stats:
+            'Physical Damage: 30-60\nCritical Hit Chance: 5.5%\nAttacks per Second: 1.4\nLevel: 40\nStr: 80',
+        });
+        const weaponText = `Item Class: Two Hand Maces
+Rarity: Rare
+Beast Bane
+Great Mallet
+--------
+Physical Damage: 45-89 (augmented)
+--------
+Requires Level 35, 95 Str
+--------
+Item Level: 38
+--------
++15 to Strength`;
+
+        const result = await handler({ text: weaponText, enrich: true });
+        const output = result.content[0]!.text;
+
+        expect(output).toContain('Base Phys: 30-60');
+        expect(output).toContain('Base Crit: 5.5%');
+        expect(output).toContain('Base APS: 1.4');
+      });
+
+      it('omits base section when poe2db returns empty stats', async () => {
+        setupPoe2dbMock({ stats: '' });
+
+        const result = await handler({ text: rareBodyArmour, enrich: true });
+
+        expect(result.content[0]!.text).not.toContain('**Base:**');
+      });
+
+      it('omits base section when stats contain no recognized patterns', async () => {
+        setupPoe2dbMock({ stats: 'Some unrecognized text\nAnother line' });
+
+        const result = await handler({ text: rareBodyArmour, enrich: true });
+
+        expect(result.content[0]!.text).not.toContain('**Base:**');
+      });
+    });
+
+    describe('mod tier matching', () => {
+      it('renders mod tier table when tier data matches mods', async () => {
+        setupPoe2dbMock({ tierData });
+
+        const result = await handler({ text: rareBodyArmour, enrich: true });
+        const output = result.content[0]!.text;
+
+        expect(output).toContain('**Mod Tiers (Item Level 75):**');
+        expect(output).toContain('| Modifier | Value | Tier | Range | Best at ilvl | P/S |');
+        expect(output).toContain('+50 to maximum Energy Shield');
+        expect(output).toContain('T1');
+      });
+
+      it('identifies prefix and suffix correctly', async () => {
+        setupPoe2dbMock({ tierData });
+
+        const result = await handler({ text: rareBodyArmour, enrich: true });
+        const tableRows = result.content[0]!.text.split('\n').filter(
+          (l) => l.startsWith('|') && !l.startsWith('|--'),
+        );
+
+        const esRow = tableRows.find((l) => l.includes('+50 to maximum Energy Shield'));
+        const evasRow = tableRows.find((l) => l.includes('15% increased Evasion Rating'));
+        const intRow = tableRows.find((l) => l.includes('+30 to Intelligence'));
+
+        expect(esRow).toContain('| P |');
+        expect(evasRow).toContain('| S |');
+        expect(intRow).toContain('| S |');
+      });
+
+      it('omits mod tier table when no tier data section exists', async () => {
+        setupPoe2dbMock({ stats: 'Energy Shield: 150' });
+
+        const result = await handler({ text: rareBodyArmour, enrich: true });
+
+        expect(result.content[0]!.text).not.toContain('**Mod Tiers');
+      });
+
+      it('omits mod tier table when no mods match tier data', async () => {
+        setupPoe2dbMock({ tierData: 'Unrelated Mod Name\tTier 1\t50\t10-20\tprefix' });
+
+        const result = await handler({ text: rareBodyArmour, enrich: true });
+
+        expect(result.content[0]!.text).not.toContain('**Mod Tiers');
+      });
+    });
+
+    describe('open prefix/suffix slots', () => {
+      it('shows open slots for rare items', async () => {
+        setupPoe2dbMock({ tierData });
+
+        const result = await handler({ text: rareBodyArmour, enrich: true });
+        const output = result.content[0]!.text;
+
+        expect(output).toContain('**Open Slots:** 2 prefix, 1 suffix open');
+        expect(output).toContain('3P/3S max for Rare');
+      });
+
+      it('shows open slots for magic items', async () => {
+        const magicTierData = [
+          '+25 to maximum Life\tTier 1\t30\t15-25\tprefix',
+          '8% increased Attack Speed\tTier 1\t30\t5-8\tsuffix',
+        ].join('\n');
+        setupPoe2dbMock({ tierData: magicTierData });
+
+        const result = await handler({ text: magicGloves, enrich: true });
+
+        expect(result.content[0]!.text).toContain('1P/1S max for Magic');
+      });
+
+      it('does not show open slots when no P/S tags in tier data', async () => {
+        setupPoe2dbMock({
+          tierData: '+60 to maximum Energy Shield\tTier 1\t68\t40-55\t',
+        });
+
+        const result = await handler({ text: rareBodyArmour, enrich: true });
+
+        expect(result.content[0]!.text).not.toContain('**Open Slots:**');
+      });
+    });
+
+    describe('unique pricing', () => {
+      it('renders price when ninja returns a match', async () => {
+        setupPoe2dbMock();
+        setupNinjaMock('Circle of Guilt', 150, 25);
+
+        const result = await handler({ text: uniqueRing, enrich: true });
+        const output = result.content[0]!.text;
+
+        expect(output).toContain('**Price:** Circle of Guilt');
+        expect(output).toContain('150.0 chaos');
+        expect(output).toContain('vol: 25');
+      });
+
+      it('omits price line when ninja returns no match', async () => {
+        setupPoe2dbMock();
+        vi.mocked(getNinjaItemOverview).mockResolvedValue({ lines: [] });
+
+        const result = await handler({ text: uniqueRing, enrich: true });
+
+        expect(result.content[0]!.text).not.toContain('**Price:**');
+      });
+
+      it('omits price line when ninja throws', async () => {
+        setupPoe2dbMock();
+        vi.mocked(getNinjaItemOverview).mockRejectedValue(new Error('HTTP 404'));
+
+        const result = await handler({ text: uniqueRing, enrich: true });
+
+        expect(result.content[0]!.text).not.toContain('**Price:**');
+      });
+
+      it('renders both base type and pricing for unique equipment', async () => {
+        setupPoe2dbMock({ stats: 'Armour: 500\nLevel: 60\nStr: 100' });
+        setupNinjaMock("Kaom's Heart", 500, 50);
+
+        const result = await handler({ text: uniqueBodyArmour, enrich: true });
+        const output = result.content[0]!.text;
+
+        expect(output).toContain('Base Armour: 500');
+        expect(output).toContain("**Price:** Kaom's Heart");
+        expect(output).toContain('500.0 chaos');
+      });
+
+      it('does not display price section for non-unique items', async () => {
+        setupPoe2dbMock();
+
+        const result = await handler({ text: rareBodyArmour, enrich: true });
+
+        expect(result.content[0]!.text).not.toContain('**Price:**');
+      });
+    });
+
+    describe('non-enrichable items', () => {
+      it('returns no enrichment section for currency', async () => {
+        const result = await handler({ text: currencyItem, enrich: true });
+
+        expect(result.content[0]!.text).not.toContain('### Enrichment');
+      });
+    });
+
+    describe('TEST 5: unique price lookup failure omits misleading message', () => {
+      it('does not show "not listed" when price lookup returns null', async () => {
+        setupPoe2dbMock();
+        vi.mocked(getNinjaItemOverview).mockResolvedValue({ lines: [] });
+
+        const result = await handler({ text: uniqueBodyArmour, enrich: true });
+        const output = result.content[0]!.text;
+
+        expect(output).not.toContain('not listed');
+        expect(output).not.toContain('**Price:**');
+      });
+
+      it('shows price when lookup succeeds', async () => {
+        setupPoe2dbMock();
+        setupNinjaMock("Kaom's Heart", 150, 42);
+
+        const result = await handler({ text: uniqueBodyArmour, enrich: true });
+        const output = result.content[0]!.text;
+
+        expect(output).toContain('**Price:**');
+        expect(output).toContain('150.0 chaos');
+        expect(output).toContain('vol: 42');
+      });
+    });
+
+    describe('TEST 3+4: RU locale enrichment with base type translation', () => {
+      const russianBodyArmour = `Класс предмета: Нательные доспехи
+Редкость: Редкий
+Кокон скорби
+Облачение Кет
+--------
+Энергетический щит: 147
+--------
+Требования:
+Уровень: 35
+Инт: 67
+--------
+Уровень предмета: 35
+--------
+Гнёзда: S S
+--------
+55% увеличение энергетического щита
++31 к максимуму энергетического щита
++14% к сопротивлению огню
+12% увеличение редкости найденных предметов`;
+
+      it('resolves English base type and includes enrichment', async () => {
+        vi.mocked(resolveEnglishBaseType).mockResolvedValue('Keth_Raiment');
+        setupPoe2dbMock({ stats: 'Energy Shield: 70\nLevel: 35\nInt: 67' });
+
+        const result = await handler({ text: russianBodyArmour, enrich: true });
+        const output = result.content[0]!.text;
+
+        expect(output).toContain('### Enrichment');
+        expect(output).toContain('Base ES: 70');
+      });
+
+      it('shows English base type name in header when lang != en', async () => {
+        vi.mocked(resolveEnglishBaseType).mockResolvedValue('Keth_Raiment');
+        setupPoe2dbMock({ stats: 'Energy Shield: 70' });
+
+        const result = await handler({ text: russianBodyArmour, enrich: true });
+        const output = result.content[0]!.text;
+
+        expect(output).toContain('Облачение Кет (Keth Raiment)');
+      });
+
+      it('calls resolveEnglishBaseType for non-EN items', async () => {
+        vi.mocked(resolveEnglishBaseType).mockResolvedValue('Keth_Raiment');
+        setupPoe2dbMock({ stats: 'Energy Shield: 70' });
+
+        await handler({ text: russianBodyArmour, enrich: true });
+
+        expect(resolveEnglishBaseType).toHaveBeenCalledWith(
+          'Облачение Кет',
+          expect.any(String),
+          'ru',
+        );
+      });
+
+      it('fetches poe2db with us lang using English slug', async () => {
+        vi.mocked(resolveEnglishBaseType).mockResolvedValue('Keth_Raiment');
+        setupPoe2dbMock({ stats: 'Energy Shield: 70' });
+
+        await handler({ text: russianBodyArmour, enrich: true });
+
+        expect(getPoe2dbPage).toHaveBeenCalledWith('Keth_Raiment', 'us');
+      });
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Review Bug Fix Tests
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  describe('TEST 1: weapon base stats not classified as explicit mods', () => {
+    const wandWithBaseStats = `Item Class: Wands
+Rarity: Rare
+Plague Bane
+Withered Wand
+--------
+Wand Damage: 5-14
+Attack Speed: 1.50
+--------
+Requirements:
+Level: 35
+Int: 94
+--------
+Item Level: 42
+--------
+Sockets: S
+--------
+116% increased Spell Damage
+Grants Level 11 Chaos Bolt Skill
+27% increased Mana Regeneration Rate`;
+
+    it('parses Wand Damage as offense stat, not explicit mod', async () => {
+      const result = await handler({ text: wandWithBaseStats });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Offense');
+      expect(output).toContain('**Physical Damage:** 5-14');
+    });
+
+    it('does not include Wand Damage in explicit mods', async () => {
+      const result = await handler({ text: wandWithBaseStats });
+      const output = result.content[0]!.text;
+      const lines = output.split('\n');
+      const explicitIdx = lines.findIndex((l: string) => l.includes('**Explicit:**'));
+
+      if (explicitIdx !== -1) {
+        const explicitSection = lines
+          .slice(explicitIdx)
+          .filter((l: string) => l.startsWith('- '))
+          .join('\n');
+        expect(explicitSection).not.toContain('Wand Damage');
+        expect(explicitSection).not.toContain('Attack Speed');
+      }
+    });
+
+    it('parses Attack Speed as offense stat', async () => {
+      const result = await handler({ text: wandWithBaseStats });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Offense');
+    });
+
+    const russianWandWithBaseStats = `Класс предмета: Жезлы
+Редкость: Редкий
+Чумное проклятие
+Увядший жезл
+--------
+Жезл Урон: 5-14
+Атак в секунду: 1.50
+--------
+Требования:
+Уровень: 35
+Инт: 94
+--------
+Уровень предмета: 42
+--------
+116% увеличение урона заклинаний`;
+
+    it('parses Russian weapon damage as offense stat', async () => {
+      const result = await handler({ text: russianWandWithBaseStats });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Offense');
+      expect(output).toContain('**Physical Damage:** 5-14');
+    });
+  });
+
+  describe('TEST 10: EN granted skills extraction (inline format)', () => {
+    const itemWithGrantedSkill = `Item Class: Wands
+Rarity: Rare
+Plague Bane
+Withered Wand
+--------
+Item Level: 42
+--------
+116% increased Spell Damage
+Grants Level 11 Chaos Bolt Skill
+27% increased Mana Regeneration Rate`;
+
+    it('extracts granted skill from EN inline format', async () => {
+      const result = await handler({ text: itemWithGrantedSkill });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Granted Skills');
+      expect(output).toContain('Chaos Bolt');
+      expect(output).toContain('Level 11');
+    });
+
+    it('removes granted skill from explicit mods list', async () => {
+      const result = await handler({ text: itemWithGrantedSkill });
+      const output = result.content[0]!.text;
+      const lines = output.split('\n');
+      const explicitIdx = lines.findIndex((l: string) => l.includes('**Explicit:**'));
+
+      if (explicitIdx !== -1) {
+        const explicitSection = lines
+          .slice(explicitIdx)
+          .filter((l: string) => l.startsWith('- '))
+          .join('\n');
+        expect(explicitSection).not.toContain('Grants Level 11');
+        expect(explicitSection).not.toContain('Chaos Bolt Skill');
+      }
+    });
+
+    it('still parses RU granted skill format correctly', async () => {
+      const russianItem = `Класс предмета: Жезлы
+Редкость: Редкий
+Тестовый жезл
+Увядший жезл
+--------
+Уровень предмета: 42
+--------
+Дарует умение: Снаряд хаоса 11 уровня
+91% увеличение урона от чар`;
+
+      const result = await handler({ text: russianItem });
+      const output = result.content[0]!.text;
+
+      expect(output).toContain('### Granted Skills');
+      expect(output).toContain('Снаряд хаоса 11 уровня');
     });
   });
 });

@@ -420,9 +420,13 @@ export function detectLanguage(text: string): { code: SupportedLanguage; strings
 /**
  * Pattern to match "Grants Skill:" lines across all supported languages.
  * Used to extract granted skills and filter them from explicit mods.
+ *
+ * Handles multiple EN clipboard formats:
+ * - "Grants Skill: Chaos Bolt (Level 11)" — colon-separated
+ * - "Grants Level 11 Chaos Bolt Skill" — inline level format
  */
 export const GRANTED_SKILL_PATTERN =
-  /(?:Grants? Skill|Дарует умение|Даёт умение|스킬 부여|賦予技能|赋予技能|Gewährt Fertigkeit|Verleiht Fertigkeit|Octroie la compétence|Compétence octroyée|付与スキル|スキルを付与|スキル付与|Otorga habilidad|Concede [Hh]abilidade|มอบสกิล|ได้รับสกิล)[:\s]*(.+)/i;
+  /(?:Grants? (?:Skill|Level \d+\s+.+\s+Skill)|Дарует умение|Даёт умение|Дарует умение|스킬 부여|賦予技能|赋予技能|Gewährt Fertigkeit|Verleiht Fertigkeit|Octroie la compétence|Compétence octroyée|付与スキル|スキルを付与|スキル付与|Otorga habilidad|Concede [Hh]abilidade|มอบสกิล|ได้รับสกิล)[:\s]*(.*)/i;
 
 /**
  * Pattern to match "Socketed Rune:" lines (metadata, not actual mods).
@@ -657,6 +661,72 @@ export const ITEM_CLASS_MAP_PATTERN = /waystone|map|logbook|地圖|地图|航海
 /** Pattern to match socketable item class strings across all languages. */
 export const ITEM_CLASS_SOCKETABLE_PATTERN = /socketable|插槽物品|鑲嵌物/i;
 
+/** Pattern to match equipment item class strings across all languages (for enrichment eligibility). */
+export const ITEM_CLASS_EQUIPMENT_PATTERN =
+  /body armou?r|helmet|glove|boot|shield|quiver|focus|bow|staff|wand|sceptre|mace|sword|axe|claw|dagger|flail|spear|crossbow|buckler|ring|amulet|belt|нагрудник|нательн|шлем|перчатк|сапог|ботинк|щит|колчан|фокус|жезл|посох|булав|меч|топор|кинжал|коготь|цеп|копь|арбалет|лук|скипетр|кольц|амулет|пояс|갑옷|흉갑|투구|장갑|신발|방패|화살통|포커스|완드|지팡이|철퇴|검|도끼|단검|발톱|도리깨|창|석궁|활|홀|반지|목걸이|벨트|胸甲|頭盔|手套|鞋子|盾|箭袋|法杖|長杖|弓|錘|連枷|長矛|弩|匕首|爪|劍|斧|權杖|戒指|項鏈|腰帶|Rüstung|Helm|Handschuh|Stiefel|Schild|Köcher|Zauberstab|Stab|Bogen|Streitkolben|Schwert|Axt|Dolch|Klaue|Flegel|Speer|Armbrust|Szepter|Ring|Amulett|Gürtel|armure|casque|gant|botte|bouclier|carquois|baguette|bâton|arc|masse|épée|hache|poignard|griffe|fléau|lance|arbalète|sceptre|anneau|amulette|ceinture|armadura|casco|guante|bota|escudo|carcaj|varita|bastón|arco|maza|espada|hacha|daga|garra|mangual|lanza|ballesta|cetro|anillo|collar|cinturón|capacete|luva|escudo|aljava|cajado|bordão|besta|adaga|machado|anel|colar|cinto|ワンド|スタッフ|弓|メイス|ソード|アックス|ダガー|クロー|セプター|リング|アミュレット|ベルト|เกราะ|หมวก|ถุงมือ|รองเท้า|โล่|อาวุธ/i;
+
+/**
+ * Map a localized item class name to its poe2db English slug.
+ * Returns null if the item class is not an enrichable equipment type.
+ */
+export function mapItemClassToEnglishSlug(itemClass: string): string | null {
+  const lc = itemClass.toLowerCase();
+  const mappings: Array<{ pattern: RegExp; slug: string }> = [
+    {
+      pattern:
+        /body armou?r|нагрудник|нательн|갑옷|흉갑|胸甲|Rüstung|armure|armadura|ワンド.*甲|เกราะ/i,
+      slug: 'Body_Armours',
+    },
+    {
+      pattern: /helmet|шлем|투구|頭盔|头盔|Helm|casque|casco|capacete|ヘルメット|หมวก/i,
+      slug: 'Helmets',
+    },
+    {
+      pattern: /glove|перчатк|장갑|手套|Handschuh|gant|guante|luva|グローブ|ถุงมือ/i,
+      slug: 'Gloves',
+    },
+    { pattern: /boot|сапог|ботинк|신발|鞋子|靴|Stiefel|botte|bota|ブーツ|รองเท้า/i, slug: 'Boots' },
+    { pattern: /shield|buckler|щит|방패|盾|Schild|bouclier|escudo|シールド|โล่/i, slug: 'Shields' },
+    {
+      pattern: /quiver|колчан|화살통|箭袋|Köcher|carquois|carcaj|aljava|クイバー/i,
+      slug: 'Quivers',
+    },
+    { pattern: /foci|focus|фокус|포커스|法杖|Fokus|focaliseur|foco|フォーカス/i, slug: 'Foci' },
+    { pattern: /^wand|жезл|완드|魔杖|Zauberstab|baguette|varita|ワンド/i, slug: 'Wands' },
+    {
+      pattern: /staff|quarterstaff|посох|지팡이|長杖|Stab|bâton|bastón|cajado|bordão|スタッフ/i,
+      slug: 'Staves',
+    },
+    { pattern: /bow(?!l)|лук|활|弓|Bogen|arc(?!h)|arco|弓|ボウ/i, slug: 'Bows' },
+    {
+      pattern: /crossbow|арбалет|석궁|弩|Armbrust|arbalète|ballesta|besta|クロスボウ/i,
+      slug: 'Crossbows',
+    },
+    {
+      pattern: /(?:two hand )?mace|булав|철퇴|錘|Streitkolben|masse|maza|maça|メイス/i,
+      slug: 'Maces',
+    },
+    { pattern: /sword|меч|검|劍|剑|Schwert|épée|espada|ソード/i, slug: 'Swords' },
+    { pattern: /(?:two hand )?axe|топор|도끼|斧|Axt|hache|hacha|machado|アックス/i, slug: 'Axes' },
+    { pattern: /claw|коготь|발톱|爪|Klaue|griffe|garra|クロー/i, slug: 'Claws' },
+    { pattern: /dagger|кинжал|단검|匕首|Dolch|poignard|daga|adaga|ダガー/i, slug: 'Daggers' },
+    { pattern: /flail|цеп|도리깨|連枷|Flegel|fléau|mangual|フレイル/i, slug: 'Flails' },
+    { pattern: /spear|копь|창|長矛|Speer|lance|lanza|lança|スピア/i, slug: 'Spears' },
+    { pattern: /sceptre|скипетр|홀|權杖|权杖|Szepter|sceptre|cetro|セプター/i, slug: 'Sceptres' },
+    { pattern: /ring|кольц|반지|戒指|Ring|anneau|anillo|anel|リング/i, slug: 'Rings' },
+    {
+      pattern: /amulet|амулет|목걸이|項鏈|项链|Amulett|amulette|collar|colar|アミュレット/i,
+      slug: 'Amulets',
+    },
+    { pattern: /belt|пояс|벨트|腰帶|腰带|Gürtel|ceinture|cinturón|cinto|ベルト/i, slug: 'Belts' },
+  ];
+
+  for (const { pattern, slug } of mappings) {
+    if (pattern.test(lc)) return slug;
+  }
+  return null;
+}
+
 /**
  * Single-word item type identifiers that appear alone in a section.
  * These are weapon/item categories and should not be parsed as mods.
@@ -769,6 +839,14 @@ export const MOD_MARKERS = {
  */
 export const STANDALONE_RUNE_NAME_PATTERN =
   /(?:\bRune\b|руна|\u0440\u0443\u043d\u044b|룬|ルーン|符文|\bRuna\b|รูน|\bSoul Core\b|Сердцевина души|Ядро души|영혼 핵|ソウルコア|靈魂核心|灵魂核心|Seelenkern|Noyau d['']\u00e2me|N[úu]cleo de [Aa]lma|แก่นวิญญาณ)/i;
+
+/**
+ * Pattern to match weapon-type-specific damage lines across all supported languages.
+ * PoE2 uses labels like "Wand Damage:", "Bow Damage:", "Staff Damage:" etc.
+ * instead of the generic "Physical Damage:" for some weapon types.
+ */
+export const WEAPON_DAMAGE_PATTERN =
+  /^(?:Wand|Staff|Bow|Mace|Flail|Spear|Crossbow|Dagger|Claw|Sword|Axe|Sceptre|Quarterstaff|Жезл|Посох|Лук|Булав|Цеп|Копь|Арбалет|Кинжал|Коготь|Меч|Топор|Скипетр|완드|지팡이|활|철퇴|도리깨|창|석궁|단검|발톱|검|도끼|홀|法杖|長杖|弓|錘|連枷|長矛|弩|匕首|爪|劍|斧|權杖|ワンド|スタッフ|弓|メイス|フレイル|スピア|クロスボウ|ダガー|クロー|ソード|アックス|セプター|Varita|Bastón|Arco|Maza|Mangual|Lanza|Ballesta|Daga|Garra|Espada|Hacha|Cetro|Cajado|Bordão|Besta|Adaga|Machado|Stab|Zauberstab|Bogen|Streitkolben|Flegel|Speere?|Armbrust|Dolch|Klaue|Schwert|Axt|Szepter|Bâton|Baguette|Arc|Masse|Fléau|Lance|Arbalète|Poignard|Griffe|Épée|Hache|Sceptre)[\s]*(?:Damage|[Уу]рон|피해|傷害|伤害|ダメージ|Daño|Dano|Schaden|Dégâts|ความเสียหาย)[：:]/i;
 
 /** Augmented value marker. */
 export const AUGMENTED_MARKER = /\(augmented\)/i;
