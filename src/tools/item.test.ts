@@ -3352,9 +3352,30 @@ Item Level: 38
       it('renders mod tier table when tiers match', async () => {
         setupBaseItemMock();
         setupModTiersMock([
-          { modText: '+50 to maximum Energy Shield', value: 50, tier: 1, totalTiers: 8, range: [40, 55], prefixSuffix: 'prefix' },
-          { modText: '15% increased Evasion Rating', value: 15, tier: 1, totalTiers: 5, range: [15, 20], prefixSuffix: 'suffix' },
-          { modText: '+30 to Intelligence', value: 30, tier: 1, totalTiers: 6, range: [25, 35], prefixSuffix: 'suffix' },
+          {
+            modText: '+50 to maximum Energy Shield',
+            value: 50,
+            tier: 1,
+            totalTiers: 8,
+            range: [40, 55],
+            prefixSuffix: 'prefix',
+          },
+          {
+            modText: '15% increased Evasion Rating',
+            value: 15,
+            tier: 1,
+            totalTiers: 5,
+            range: [15, 20],
+            prefixSuffix: 'suffix',
+          },
+          {
+            modText: '+30 to Intelligence',
+            value: 30,
+            tier: 1,
+            totalTiers: 6,
+            range: [25, 35],
+            prefixSuffix: 'suffix',
+          },
         ]);
 
         const result = await handler({ text: rareBodyArmour, enrich: true });
@@ -3368,15 +3389,29 @@ Item Level: 38
       it('identifies prefix and suffix correctly', async () => {
         setupBaseItemMock();
         setupModTiersMock([
-          { modText: '+50 to maximum Energy Shield', value: 50, tier: 1, totalTiers: 8, range: [40, 55], prefixSuffix: 'prefix' },
-          { modText: '15% increased Evasion Rating', value: 15, tier: 1, totalTiers: 5, range: [15, 20], prefixSuffix: 'suffix' },
+          {
+            modText: '+50 to maximum Energy Shield',
+            value: 50,
+            tier: 1,
+            totalTiers: 8,
+            range: [40, 55],
+            prefixSuffix: 'prefix',
+          },
+          {
+            modText: '15% increased Evasion Rating',
+            value: 15,
+            tier: 1,
+            totalTiers: 5,
+            range: [15, 20],
+            prefixSuffix: 'suffix',
+          },
         ]);
 
         const result = await handler({ text: rareBodyArmour, enrich: true });
         const output = result.content[0]!.text;
-        const tableRows = output.split('\n').filter(
-          (l: string) => l.startsWith('|') && !l.startsWith('|--'),
-        );
+        const tableRows = output
+          .split('\n')
+          .filter((l: string) => l.startsWith('|') && !l.startsWith('|--'));
 
         const esRow = tableRows.find((l: string) => l.includes('Energy Shield'));
         const evasRow = tableRows.find((l: string) => l.includes('Evasion'));
@@ -3399,9 +3434,30 @@ Item Level: 38
       it('shows open slots for rare items', async () => {
         setupBaseItemMock();
         setupModTiersMock([
-          { modText: '+50 to maximum Energy Shield', value: 50, tier: 1, totalTiers: 8, range: [40, 55], prefixSuffix: 'prefix' },
-          { modText: '15% increased Evasion Rating', value: 15, tier: 1, totalTiers: 5, range: [15, 20], prefixSuffix: 'suffix' },
-          { modText: '+30 to Intelligence', value: 30, tier: 1, totalTiers: 6, range: [25, 35], prefixSuffix: 'suffix' },
+          {
+            modText: '+50 to maximum Energy Shield',
+            value: 50,
+            tier: 1,
+            totalTiers: 8,
+            range: [40, 55],
+            prefixSuffix: 'prefix',
+          },
+          {
+            modText: '15% increased Evasion Rating',
+            value: 15,
+            tier: 1,
+            totalTiers: 5,
+            range: [15, 20],
+            prefixSuffix: 'suffix',
+          },
+          {
+            modText: '+30 to Intelligence',
+            value: 30,
+            tier: 1,
+            totalTiers: 6,
+            range: [25, 35],
+            prefixSuffix: 'suffix',
+          },
         ]);
 
         const result = await handler({ text: rareBodyArmour, enrich: true });
@@ -3420,8 +3476,22 @@ Item Level: 38
           baseEs: null,
         });
         setupModTiersMock([
-          { modText: '+20 to maximum Life', value: 20, tier: 1, totalTiers: 6, range: [15, 25], prefixSuffix: 'prefix' },
-          { modText: '5% increased Attack Speed', value: 5, tier: 2, totalTiers: 4, range: [5, 8], prefixSuffix: 'suffix' },
+          {
+            modText: '+20 to maximum Life',
+            value: 20,
+            tier: 1,
+            totalTiers: 6,
+            range: [15, 25],
+            prefixSuffix: 'prefix',
+          },
+          {
+            modText: '5% increased Attack Speed',
+            value: 5,
+            tier: 2,
+            totalTiers: 4,
+            range: [5, 8],
+            prefixSuffix: 'suffix',
+          },
         ]);
 
         const result = await handler({ text: magicGloves, enrich: true });
@@ -3460,7 +3530,14 @@ Item Level: 38
       });
 
       it('renders both base type and pricing for unique equipment', async () => {
-        setupBaseItemMock({ name: 'Glorious Plate', baseEs: null, baseArmour: 500, reqLevel: 60, reqStr: 100, reqInt: null });
+        setupBaseItemMock({
+          name: 'Glorious Plate',
+          baseEs: null,
+          baseArmour: 500,
+          reqLevel: 60,
+          reqStr: 100,
+          reqInt: null,
+        });
         setupScoutMock(500, 50);
 
         const result = await handler({ text: uniqueBodyArmour, enrich: true });

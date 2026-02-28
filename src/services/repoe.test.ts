@@ -246,7 +246,7 @@ describe('lookupBaseItem', () => {
   it('strips prefix names from Magic items', async () => {
     mockBaseItemsJson(WAND_BASE_ITEM);
 
-    const result = await lookupBaseItem("Runic Withered Wand");
+    const result = await lookupBaseItem('Runic Withered Wand');
 
     expect(result).toBeNull();
   });
@@ -272,9 +272,15 @@ describe('lookupBaseItemByClass', () => {
         name: 'Leather Hood',
         tags: ['int_armour', 'helmet', 'armour', 'default'],
         properties: {
-          armour: null, energy_shield: { min: 10, max: 10 }, evasion: null,
-          block: null, attack_time: null, critical_strike_chance: null,
-          physical_damage_min: null, physical_damage_max: null, range: null,
+          armour: null,
+          energy_shield: { min: 10, max: 10 },
+          evasion: null,
+          block: null,
+          attack_time: null,
+          critical_strike_chance: null,
+          physical_damage_min: null,
+          physical_damage_max: null,
+          range: null,
           movement_speed: null,
         },
         requirements: { dexterity: 0, intelligence: 10, level: 1, strength: 0 },
@@ -340,11 +346,7 @@ describe('matchSingleModTier', () => {
   it('returns null when mod does not match item tags', async () => {
     mockModsJson({ ...SPELL_DAMAGE_MODS });
 
-    const result = await matchSingleModTier(
-      '116% increased Spell Damage',
-      ['ring', 'default'],
-      48,
-    );
+    const result = await matchSingleModTier('116% increased Spell Damage', ['ring', 'default'], 48);
 
     expect(result).toBeNull();
   });
@@ -364,11 +366,7 @@ describe('matchSingleModTier', () => {
   it('returns null when mod text has no numeric value', async () => {
     mockModsJson({ ...SPELL_DAMAGE_MODS });
 
-    const result = await matchSingleModTier(
-      'increased Spell Damage',
-      ['wand', 'default'],
-      48,
-    );
+    const result = await matchSingleModTier('increased Spell Damage', ['wand', 'default'], 48);
 
     expect(result).toBeNull();
   });
@@ -389,11 +387,7 @@ describe('matchSingleModTier', () => {
   it('returns null on fetch error', async () => {
     vi.mocked(fetchJson).mockRejectedValue(new Error('Network error'));
 
-    const result = await matchSingleModTier(
-      '116% increased Spell Damage',
-      ['wand', 'default'],
-      48,
-    );
+    const result = await matchSingleModTier('116% increased Spell Damage', ['wand', 'default'], 48);
 
     expect(result).toBeNull();
   });

@@ -138,9 +138,7 @@ let baseItemIndex: BaseItemIndex | null = null;
  * - `[Resistances|Fire Resistance]` → `Fire Resistance`
  */
 function stripMarkup(text: string): string {
-  return text
-    .replace(/\[([^\]|]+)\|([^\]]+)\]/g, '$2')
-    .replace(/\[([^\]]+)\]/g, '$1');
+  return text.replace(/\[([^\]|]+)\|([^\]]+)\]/g, '$2').replace(/\[([^\]]+)\]/g, '$1');
 }
 
 /**
@@ -214,9 +212,7 @@ function buildModIndex(modsData: Record<string, RepoeModEntry>): ModIndex {
 }
 
 /** Build base item lookup index from raw RePoE base_items data. */
-function buildBaseItemIndex(
-  baseItemsData: Record<string, RepoeBaseItemEntry>,
-): BaseItemIndex {
+function buildBaseItemIndex(baseItemsData: Record<string, RepoeBaseItemEntry>): BaseItemIndex {
   const index: BaseItemIndex = new Map();
 
   for (const entry of Object.values(baseItemsData)) {
@@ -235,12 +231,8 @@ function buildBaseItemIndex(
       baseEvasion: props.evasion?.min ?? null,
       basePhysDamageMin: props.physical_damage_min,
       basePhysDamageMax: props.physical_damage_max,
-      baseCritChance: props.critical_strike_chance
-        ? props.critical_strike_chance / 100
-        : null,
-      baseAttackTime: props.attack_time
-        ? +(1000 / props.attack_time).toFixed(2)
-        : null,
+      baseCritChance: props.critical_strike_chance ? props.critical_strike_chance / 100 : null,
+      baseAttackTime: props.attack_time ? +(1000 / props.attack_time).toFixed(2) : null,
       reqLevel: reqs?.level ?? null,
       reqStr: reqs?.strength || null,
       reqDex: reqs?.dexterity || null,
